@@ -1402,8 +1402,8 @@ function faunaClone(F) {
 </script>
 <script id="generator-src" type="text/plain">
 'use strict';
-const GEN_VERSION = 12;
-let volcanoGenerationVersion = 12;
+const GEN_VERSION = 13;
+let volcanoGenerationVersion = 13;
 const W = 3000, H = 3000, N = W * H;
 
 // 陸地の総面積は 2000×2000 ブロック分。大陸：島 ＝ 60：10 の比率で分ける
@@ -1968,7 +1968,7 @@ function simulateTectonics(seed, progress) {
         stats.collisions++;
         stampGeo(thick, qx, qy, 5, 0.045 * k, (i) => crust[i] !== CRUST.OCEANIC);
         stampGeo(thick, qx + rx * 9, qy + ry * 9, 8, 0.03 * k, (i) => crust[i] !== CRUST.OCEANIC && onOver(i));
-        stampGeo(oro, qx + rx * 2, qy + ry * 2, 3.2, 14 * k);
+        stampGeo(oro, qx + rx * 2, qy + ry * 2, volcanoGenerationVersion>=13 ? 2.8+Math.min(3,k*.4) : 3.2, 14 * k);
         stampGeo(basin, qx - rx * 7, qy - ry * 7, 4, 4 * k, (i) => crust[i] !== CRUST.OCEANIC);
         stampGeo(oroAge, qx, qy, 6, -1e4, null);
       } else if (overCont) {
@@ -2159,7 +2159,8 @@ function buildLandform(seed, tec, progress) {
     if (o > 100) {
       // 山脈：尾根状ノイズで稜線と谷を刻む
       const r = ridged(ridgeN, x * 0.011, y * 0.011, 4);
-      e += o * (0.2 + 0.8 * r * r) + o * 0.15 * ridged(ridge2N, x * 0.035, y * 0.035, 3);
+      const young=volcanoGenerationVersion>=13 ? 1-smoothstep(20,180,sampleGeo(oroAge,wx,wy)) : 0;
+      e += o * (volcanoGenerationVersion>=13 ? .06+(1.05+.3*young)*r*r : .2+.8*r*r) + o * .15 * ridged(ridge2N,x*.035,y*.035,3);
     }
     const v = sampleGeo(volc, wx, wy) + sampleGeo(hot, wx, wy) * (crust[geoIndexAt(x, y)] === CRUST.OCEANIC ? 1 : 0.2);
     if (v > 60) {
@@ -2227,7 +2228,10 @@ function buildLandform(seed, tec, progress) {
       if (e < 2) e = 2;
     }
     // 極端な値をなだらかに抑える（最高峰は 8000m 台、最深部は 10000m 台まで）
-    if (e > 4500) e = 4500 + (e - 4500) * 0.3;
+    if (e > 4500) {
+      if(volcanoGenerationVersion<13)e=4500+(e-4500)*.3;
+      else {const gi=geoIndexAt(i%W,Math.floor(i/W));const support=smoothstep(42,65,thick[gi])*(1-smoothstep(25,160,oroAge[gi]));const cap=5600+3400*support;e=4500+(cap-4500)*(1-Math.exp(-(e-4500)/(cap-4500)));}
+    }
     if (e < -8000) e = -8000 + (e + 8000) * 0.3;
     elev[i] = e;
   }
@@ -4521,7 +4525,7 @@ function generateLandmarksGeo(seed, tec, ter, progress) {
       let sx = 0, sy = 0;
       for (let i = 0; i < N; i++) if (lab.labels[i] === bk) { sx += i % W; sy += (i - i % W) / W; }
       feats.push({ kind: 'plateau', x: Math.round(sx / big), y: Math.round(sy / big) });
-    } else {
+    } else if(volcanoGenerationVersion<13) {
       // 候補：海から遠く、すでにある程度高い所（山脈の背後）
       let best = -1, bs = -1;
       for (let y = 200; y < H - 200; y += 12) for (let x = 200; x < W - 200; x += 12) {
@@ -5350,7 +5354,7 @@ function generateWorld(seed, report) {
 
 self.onmessage = function (e) {
   const { id, seed, genVersion } = e.data;
-  volcanoGenerationVersion = genVersion === 11 ? 11 : 12;
+  volcanoGenerationVersion = [11,12].includes(genVersion) ? genVersion : 13;
   try {
     const w = generateWorld(seed >>> 0, (stage) => self.postMessage({ id, kind: 'progress', stage }));
     self.postMessage({ id, kind: 'done', elev: w.elev, type: w.type, regionId: w.regionId, mtnId: w.mtnId, seaId: w.seaId,
@@ -5981,7 +5985,7 @@ function seedToInt(str) {
 function randomSeed() { return String(1 + Math.floor(Math.random() * 999999999)); }
 
 let currentSeed = null, previousSeed = null;
-function generate(seedStr, genVersion = 12) {
+function generate(seedStr, genVersion = 13) {
   if (busy) return;
   clock.playing = false; clock.pending = 0; disposeVolcanoRuntime();
   busy = true; setButtons();
@@ -7734,7 +7738,7 @@ function autoSaveMaybe(force) {
 // 読み込み：Seed から世界を作り直してから、保存した変化を当てはめる
 let pendingLoad = null;
 function loadState(st) {
-  if (!st || st.format !== SAVE_FORMAT || ![11,12].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
+  if (!st || st.format !== SAVE_FORMAT || ![11,12,13].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
   if(busy){menuMsg('世界の生成が終わるまでお待ちください');return;}
   pendingLoad=st; menuShow(false); generate(st.seed,st.genVersion);
 }
