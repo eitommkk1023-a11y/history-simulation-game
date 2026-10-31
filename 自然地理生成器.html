@@ -1,4 +1,9 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}#displayMenu { max-height:none; bottom:calc(8px + var(--safe-b)); overflow:hidden; }
+#displayMenu .shead { flex:0 0 auto; }
+#displayBody { flex:1 1 auto; min-height:0; overflow-y:auto; touch-action:pan-y; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding-bottom:16px; }
+#displayBody > * { flex-shrink:0; }
+#displayBody label { display:inline-flex;align-items:center;min-height:44px;gap:6px; }
+</style></head><body>
 
 
 
@@ -228,15 +233,20 @@
 
 
 <div id="view"></div>
+<canvas id="weatherMotion" aria-hidden="true" style="position:fixed;inset:0;pointer-events:none;z-index:4"></canvas>
 <div id="displayMenu" class="sheet" role="dialog" aria-label="表示設定">
   <div class="shead"><b>表示設定</b><button id="displayClose">閉じる</button></div>
+  <div id="displayBody" class="scrollable">
   <div class="sfilter" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px">
     <label><input type="checkbox" id="displayLabels" checked> 川・山などの地名</label>
     <label><input type="checkbox" id="displayFeatures" checked> 自然地形のアイコン</label>
     <label><input type="checkbox" id="displayVolcanoes" checked> 火山のアイコン</label>
   </div>
+  <div class="sfilter"><label><input type="checkbox" id="displayWind"> 風の動き</label><label><input type="checkbox" id="displayWaves"> 波の動き</label></div>
+  <div style="color:#b9c8d8">矢印は風向・風速、波は風に応じた海面の動き</div>
   <div id="displayModes" class="sfilter"></div>
   <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
+  </div>
 </div>
 
 <div id="toolbar">
@@ -7638,7 +7648,7 @@ function serializeBaseState() {
     clock: { day: clock.day, mode: clock.mode, speed: clock.speed },
     history: { list: history.list, nextId: history.nextId },
     names: names.overrides,
-    view: { heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
+    view: { wind:showWind, waves:showWaves, heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
     fauna: fauna ? { kmPerCell: fauna.kmPerCell, areaKm2: fauna.areaKm2, species: Object.fromEntries(Object.entries(fauna.species).map(([k, S]) =>
       [k, { nextId: S.nextId, rngState: S.rngState, pops: S.pops }])) } : null,
     hunt: { active: faHunt.active, hunters: faHunt.hunters, skill: faHunt.skill, time: faHunt.time, cell: faHunt.cell, total: faHunt.total, rngState: faHunt.rng ? faHunt.rng.state() : null },
@@ -7665,6 +7675,7 @@ function applyState(st) {
   names.overrides = st.names || {};
   for (const e of names.list) { const o = names.overrides[e.key]; e.user = o ? o.user : null; e.hist = o ? o.hist || [] : []; }
   if (st.view) {
+    showWind=st.view.wind===true;showWaves=st.view.waves===true;document.getElementById("displayWind").checked=showWind;document.getElementById("displayWaves").checked=showWaves;
     setHeightScale(st.view.heightScale || 1.5);
     lab.clouds = st.view.clouds !== false; lab.precip = st.view.precip !== false; lab.markers = st.view.markers !== false;
     lab.features = st.view.features !== false; labelsOn = st.view.labels !== false;
@@ -7944,7 +7955,49 @@ function onResize() {
 window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
 
+let showWind=false,showWaves=false,weatherMotionLast=-Infinity;
+let weatherGlyphs={wind:0,waves:0};
+const weatherCanvas=document.getElementById('weatherMotion'),weatherCtx=weatherCanvas.getContext('2d');
+const weatherRay=new THREE.Raycaster(),weatherPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+for(const [id,kind]of [['displayWind','wind'],['displayWaves','waves']])document.getElementById(id).addEventListener('change',e=>{
+ if(kind==='wind')showWind=e.target.checked;else showWaves=e.target.checked;
+ weatherMotionLast=-Infinity;requestRender();
+});
+function weatherMotionFrame(now){
+ if(now-weatherMotionLast<66)return;weatherMotionLast=now;
+ if(!showWind&&!showWaves&&!weatherGlyphs.wind&&!weatherGlyphs.waves)return;
+ const w=innerWidth,h=innerHeight;
+ if(weatherCanvas.width!==w||weatherCanvas.height!==h){weatherCanvas.width=w;weatherCanvas.height=h;}
+ weatherCtx.clearRect(0,0,w,h);weatherGlyphs={wind:0,waves:0};
+ if(!world||(!showWind&&!showWaves))return;
+ const cc=world.climate.cell,m=clockMonth(),point=new THREE.Vector3(),end=new THREE.Vector3();
+ const gap=Math.max(64,Math.sqrt(w*h/160));
+ weatherCtx.lineWidth=1.8;
+ for(let sy=gap/2;sy<h;sy+=gap)for(let sx=gap/2;sx<w;sx+=gap){
+  weatherRay.setFromCamera(new THREE.Vector2(sx/w*2-1,1-sy/h*2),camera);
+  if(!weatherRay.ray.intersectPlane(weatherPlane,point))continue;
+  const x=Math.floor(point.x+W/2),y=Math.floor(point.z+H/2);
+  if(x<0||y<0||x>=W||y>=H)continue;
+  const c=Math.floor(y/cc.gridStep)*cc.gridW+Math.floor(x/cc.gridStep),k=m*cc.n+c;
+  const th=cc.windDir[k]/256*Math.PI*2,speed=cc.windSpeed[k]/10;
+  if(speed<.1)continue;
+  const dx=-Math.sin(th),dz=Math.cos(th),X=point.x,Z=point.z;
+  end.set(X+dx*cam.dist*.02,0,Z+dz*cam.dist*.02).project(camera);
+  let ux=(end.x+1)*w/2-sx,uy=(1-end.y)*h/2-sy,len=Math.hypot(ux,uy);if(len<.001)continue;ux/=len;uy/=len;
+  const phase=(now/1000*Math.min(2,speed/8))%1;
+  if(showWind){
+   const travel=(phase-.5)*gap*.45,cx=sx+ux*travel,cy=sy+uy*travel,L=Math.min(26,9+speed);
+   weatherCtx.strokeStyle='rgba(180,240,255,.85)';weatherCtx.beginPath();weatherCtx.moveTo(cx-ux*L,cy-uy*L);weatherCtx.lineTo(cx,cy);weatherCtx.lineTo(cx-ux*6-uy*4,cy-uy*6+ux*4);weatherCtx.moveTo(cx,cy);weatherCtx.lineTo(cx-ux*6+uy*4,cy-uy*6-ux*4);weatherCtx.stroke();weatherGlyphs.wind++;
+  }
+  if(showWaves&&!world.type[y*W+x]){
+   const travel=(phase-.5)*gap*.35,cx=sx+ux*travel,cy=sy+uy*travel;
+   weatherCtx.strokeStyle='rgba(220,246,255,'+(.2+.5*Math.sin(phase*Math.PI))+')';
+   weatherCtx.beginPath();weatherCtx.moveTo(cx-uy*13,cy+ux*13);weatherCtx.quadraticCurveTo(cx+ux*5,cy+uy*5,cx+uy*13,cy-ux*13);weatherCtx.stroke();weatherGlyphs.waves++;
+  }
+ }
+}
 function loop(now) {
+  weatherMotionFrame(now||0);
   requestAnimationFrame(loop);
   if (labFrame(now || 0)) needsRender = true;
   if (!needsRender) return;   // 変化がないときは描画しない（省電力）
@@ -8194,7 +8247,7 @@ function serializeState() {
 // END VOLCANO UI
 
 // テスト・将来の拡張用に現在の世界データを参照できるようにする
-window.__geo = { labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
+window.__geo = { weatherGlyphs:()=>weatherGlyphs, labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
 
 updateRiverPix();
 resetCamera();
