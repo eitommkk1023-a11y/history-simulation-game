@@ -231,7 +231,7 @@
 <div id="displayMenu" class="sheet" role="dialog" aria-label="表示設定">
   <div class="shead"><b>表示設定</b><button id="displayClose">閉じる</button></div>
   <div id="displayModes" class="sfilter"></div>
-  <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option></select></label></div>
+  <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
 </div>
 
 <div id="toolbar">
@@ -239,6 +239,7 @@
   <button id="btnPrev" disabled>前の世界</button>
   <input id="seedInput" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Seed">
   <button id="btnSeed">Seed指定</button>
+  <button id="btnFullscreen">全画面</button>
   <button id="btnReset">視点リセット</button>
   <button id="btnView">表示：植生</button>
   <button id="btnLab">実験</button>
@@ -6062,6 +6063,16 @@ function applySeed() {
 bindTap(btnSeed, applySeed);
 seedInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applySeed(); });
 bindTap(btnReset, resetCamera);
+bindTap(document.getElementById('btnFullscreen'),async()=>{
+  const root=document.documentElement;
+  try{
+    if(document.fullscreenElement||document.webkitFullscreenElement){await(document.exitFullscreen?.()||document.webkitExitFullscreen?.());}
+    else if(root.requestFullscreen)await root.requestFullscreen();
+    else if(root.webkitRequestFullscreen)root.webkitRequestFullscreen();
+    else alert('この端末ではSafariの共有ボタンから「ホーム画面に追加」し、追加したアイコンで起動すると全画面で遊べます。');
+  }catch(e){alert('全画面にできませんでした。Safariでは共有 →「ホーム画面に追加」から起動してください。');}
+});
+
 const btnView = document.getElementById('btnView');
 function selectViewMode(mode) {
   if (!VIEW_MODES.includes(mode)) return;
@@ -6087,7 +6098,7 @@ bindTap(btnView, () => {
 bindTap(document.getElementById('displayClose'), () => document.getElementById('displayMenu').classList.remove('show'));
 function setHeightScale(value) {
   const scale = Number(value);
-  if (![1, 1.5, 2].includes(scale)) return;
+  if (![1, 1.5, 2, 10, 20].includes(scale)) return;
   const heightRatio = scale / verticalExaggeration;
   verticalExaggeration = scale;
   const metres = world ? world.geology.kmPerBlock * 1000 : 3330;
@@ -6536,7 +6547,7 @@ function labMakePlume(v, big, windTh) {
   const mat = new THREE.ShaderMaterial({
     uniforms: { uTex: { value: labPuffTex }, uScale: { value: window.innerHeight / (2 * Math.tan(camera.fov * Math.PI / 360)) } },
     vertexShader: 'attribute float aSize; attribute float aAlpha; attribute vec3 color; varying vec3 vC; varying float vA;' +
-      'uniform float uScale; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = aSize * uScale / -mv.z; vC = color; vA = aAlpha; gl_Position = projectionMatrix * mv; }',
+      'uniform float uScale; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = max(3.0, aSize * uScale / -mv.z); vC = color; vA = aAlpha; gl_Position = projectionMatrix * mv; }',
     fragmentShader: 'uniform sampler2D uTex; varying vec3 vC; varying float vA; void main(){ vec4 t = texture2D(uTex, gl_PointCoord); gl_FragColor = vec4(vC, t.a * vA); }',
     transparent: true, depthWrite: false,
   });
@@ -6563,9 +6574,9 @@ function labAnimatePlume(p, dt) {
       spawn--;
       const lava = Math.random() < 0.22;
       q.lava = lava; q.age = 0; q.life = lava ? 0.6 + Math.random() * 0.6 : 3.5 + Math.random() * 1.5;
-      q.x = p.X + (Math.random() - 0.5) * 3; q.y = p.Y + 1; q.z = p.Z + (Math.random() - 0.5) * 3;
-      q.vx = (Math.random() - 0.5) * (lava ? 14 : 12); q.vz = (Math.random() - 0.5) * (lava ? 14 : 12);
-      q.vy = lava ? 18 + Math.random() * 16 : p.top / 2.2 * (0.8 + Math.random() * 0.4);
+      q.x = p.X + (Math.random() - 0.5) * p.top * .04; q.y = p.Y + p.top * .01; q.z = p.Z + (Math.random() - 0.5) * p.top * .04;
+      q.vx = (Math.random() - 0.5) * p.top * .08; q.vz = (Math.random() - 0.5) * p.top * .08;
+      q.vy = lava ? p.top * (.2 + Math.random() * .2) : p.top / 2.2 * (0.8 + Math.random() * 0.4);
     }
     if (q.life < 0) { alpha[k] = 0; continue; }
     q.age += dt;
@@ -6573,16 +6584,16 @@ function labAnimatePlume(p, dt) {
     alive++;
     const a = q.age / q.life;
     if (q.lava) {
-      q.vy -= 40 * dt;
+      q.vy -= p.top * .5 * dt;
       col[k * 3] = 1; col[k * 3 + 1] = 0.45 + 0.3 * (1 - a); col[k * 3 + 2] = 0.1;
-      size[k] = 3.5; alpha[k] = 1 - a;
+      size[k] = p.top * .025; alpha[k] = 1 - a;
     } else {
       // 上昇は高くなるほど弱まり、上空では風下に流れて傘のように広がる
       const hgt = q.y - p.Y;
-      if (hgt > p.top * 0.75) { q.vy *= 0.9; q.vx += p.wx * 30 * dt + (Math.random() - 0.5) * 20 * dt; q.vz += p.wz * 30 * dt + (Math.random() - 0.5) * 20 * dt; }
+      if (hgt > p.top * 0.75) { q.vy *= 0.9; q.vx += p.wx * p.top * .12 * dt + (Math.random() - 0.5) * p.top * .08 * dt; q.vz += p.wz * p.top * .12 * dt + (Math.random() - 0.5) * p.top * .08 * dt; }
       const g = 0.32 + 0.25 * a;
       col[k * 3] = g; col[k * 3 + 1] = g * 0.97; col[k * 3 + 2] = g * 0.95;
-      size[k] = (p.big ? 22 : 12) + (p.big ? 95 : 45) * a;
+      size[k] = p.top * (.08 + .4 * a);
       alpha[k] = Math.min(1, q.age * 3) * (1 - a) * 0.75;
     }
     q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
@@ -7567,16 +7578,8 @@ function historyCompact() {
   history.list = keep;
 }
 // 通知（画面上部に数秒だけ出す）
-function toast(ev) {
-  const box = document.getElementById('toasts');
-  const el = document.createElement('div');
-  el.className = 'toast imp' + ev.imp;
-  el.textContent = `${fmtDate(ev.day)}　${ev.text}`;
-  bindTap(el, () => { historyShow(true); el.remove(); });
-  box.prepend(el);
-  while (box.children.length > 3) box.lastChild.remove();
-  setTimeout(() => { el.classList.add('hide'); setTimeout(() => el.remove(), 400); }, 5000);
-}
+// Events remain in history; the obstructive toast overlay is disabled.
+function toast(ev) {}
 // 歴史の画面
 let histOpen = false, histCat = 'all', histMajor = false, histShown = 120;
 function historyShow(on) {
@@ -7999,6 +8002,8 @@ self.onmessage = function(e) {
     river:{water:world.water,lakeId:world.lakeId,lakeLevels:world.lakeLevels,riverPts:world.riverPts,riverStarts:world.riverStarts}};
   volcanoTargetDay=clock.day;
   await volcanoCall('init',{input,snapshot});
+  if(snapshot?.pending?.length){labReady();for(const p of snapshot.pending){const v=world.volcanoes[p.id],cc=world.climate.cell,c=labCell(v.x,v.y),th=cc.windDir[clockMonth()*cc.n+c]/256*Math.PI*2;const plume=labMakePlume(v,p.level>=3,th);plume.daysLeft=Math.max(1,Math.ceil(p.stepsLeft/4));sim.plumes.push(plume);}}
+
 }
 function advanceVolcanoClock() {
   if(!volcanoWorker || volcanoFault || clock.day<=volcanoTargetDay)return;
@@ -8130,7 +8135,7 @@ async function eruptVolcano(id,level) {
   try {const result=await volcanoCall('erupt',{id,level});
     if(!result.ok){document.getElementById('volcanoStatus').textContent=result.reason||'噴火できません';return result;}
     const v=world.volcanoes[id];labReady();const cc=world.climate.cell,c=labCell(v.x,v.y),m=clockMonth(),th=cc.windDir[m*cc.n+c]/256*Math.PI*2;
-    if(sim.plumes.length<12)sim.plumes.push(labMakePlume(v,level>=3,th));
+    sim.plumes.push(labMakePlume(v,level>=3,th));
     document.getElementById('volcanoStatus').textContent='噴火を開始しました。時間を進めると溶岩が流れます。';requestRender();return result;
   }catch(e){menuMsg(e.message);return {ok:false,reason:e.message};}
 }

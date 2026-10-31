@@ -14,14 +14,22 @@ const {chromium,webkit}=require('playwright'); const assert=require('node:assert
  assert.equal(await page.locator('#btnView').textContent(),'表示：地質');
  await page.waitForFunction(()=>window.__geo.world && window.__geo.volcanoReady(),{},{timeout:240000});
  console.log('world ready');
+ await page.locator('#btnFullscreen').click();
+ assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);
+ await page.locator('#btnFullscreen').click();
+
  const sample=await page.evaluate(()=>Array.from(window.__geo.world.elev.slice(0,100)));
- for(const scale of [1,1.5,2])await page.evaluate(s=>window.__geo.setHeightScale(s),scale);
+ for(const scale of [1,1.5,2,10,20])await page.evaluate(s=>window.__geo.setHeightScale(s),scale);
  assert.deepEqual(await page.evaluate(()=>Array.from(window.__geo.world.elev.slice(0,100))),sample);
  const id=await page.evaluate(()=>window.__geo.world.volcanoes.findIndex(v=>v.active)); assert.ok(id>=0);
  await page.evaluate(i=>window.__geo.openVolcano(i),id);
  assert.equal(await page.locator('#volcanoPanel [data-level]').count(),4);
  await page.locator('#volcanoPanel [data-level="1"]').click();
  await page.waitForFunction(()=>window.__geo.volcanoReady());
+ await page.waitForFunction(()=>window.__geo.sim?.plumes.some(p=>p.pts.geometry.attributes.aAlpha.array.some(a=>a>0)));
+ assert.equal(await page.locator('#toasts .toast').count(),0,'history notifications do not obstruct view');
+ console.log('PASS visible smoke particles, no toast overlay, 10x/20x and fullscreen');
+
  await page.evaluate(()=>window.__geo.stepVolcanoDays(2));
  await page.evaluate(async()=>{window.testVolcanoSave=await window.__geo.serializeState();});
  const snapshot=await page.evaluate(()=>({volcano:!!window.testVolcanoSave.volcano}));

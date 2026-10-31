@@ -63,6 +63,8 @@ self.onmessage = function(e) {
     river:{water:world.water,lakeId:world.lakeId,lakeLevels:world.lakeLevels,riverPts:world.riverPts,riverStarts:world.riverStarts}};
   volcanoTargetDay=clock.day;
   await volcanoCall('init',{input,snapshot});
+  if(snapshot?.pending?.length){labReady();for(const p of snapshot.pending){const v=world.volcanoes[p.id],cc=world.climate.cell,c=labCell(v.x,v.y),th=cc.windDir[clockMonth()*cc.n+c]/256*Math.PI*2;const plume=labMakePlume(v,p.level>=3,th);plume.daysLeft=Math.max(1,Math.ceil(p.stepsLeft/4));sim.plumes.push(plume);}}
+
 }
 function advanceVolcanoClock() {
   if(!volcanoWorker || volcanoFault || clock.day<=volcanoTargetDay)return;
@@ -194,7 +196,7 @@ async function eruptVolcano(id,level) {
   try {const result=await volcanoCall('erupt',{id,level});
     if(!result.ok){document.getElementById('volcanoStatus').textContent=result.reason||'噴火できません';return result;}
     const v=world.volcanoes[id];labReady();const cc=world.climate.cell,c=labCell(v.x,v.y),m=clockMonth(),th=cc.windDir[m*cc.n+c]/256*Math.PI*2;
-    if(sim.plumes.length<12)sim.plumes.push(labMakePlume(v,level>=3,th));
+    sim.plumes.push(labMakePlume(v,level>=3,th));
     document.getElementById('volcanoStatus').textContent='噴火を開始しました。時間を進めると溶岩が流れます。';requestRender();return result;
   }catch(e){menuMsg(e.message);return {ok:false,reason:e.message};}
 }
