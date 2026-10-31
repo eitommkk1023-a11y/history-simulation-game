@@ -14,6 +14,15 @@ const {chromium,webkit}=require('playwright'); const assert=require('node:assert
  assert.equal(await page.locator('#btnView').textContent(),'表示：地質');
  await page.waitForFunction(()=>window.__geo.world && window.__geo.volcanoReady(),{},{timeout:240000});
  console.log('world ready');
+ await page.locator('#btnView').click();
+ for(const id of ['displayLabels','displayFeatures','displayVolcanoes'])await page.locator('#'+id).uncheck();
+ const hidden=await page.evaluate(async()=>(await window.__geo.serializeState()).view);
+ assert.equal(hidden.labels,false);assert.equal(hidden.features,false);assert.equal(hidden.markers,false);
+ assert.equal(await page.locator('#labels .plabel:visible').count(),0);
+ for(const id of ['displayLabels','displayFeatures','displayVolcanoes'])await page.locator('#'+id).check();
+ await page.locator('#displayClose').click();
+ console.log('PASS map annotation toggles and saved visibility state');
+
  await page.locator('#btnFullscreen').click();
  assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);
  await page.locator('#btnFullscreen').click();

@@ -230,6 +230,11 @@
 <div id="view"></div>
 <div id="displayMenu" class="sheet" role="dialog" aria-label="表示設定">
   <div class="shead"><b>表示設定</b><button id="displayClose">閉じる</button></div>
+  <div class="sfilter" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px">
+    <label><input type="checkbox" id="displayLabels" checked> 川・山などの地名</label>
+    <label><input type="checkbox" id="displayFeatures" checked> 自然地形のアイコン</label>
+    <label><input type="checkbox" id="displayVolcanoes" checked> 火山のアイコン</label>
+  </div>
   <div id="displayModes" class="sfilter"></div>
   <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
 </div>
@@ -7872,7 +7877,19 @@ function labUpdateHud() {
   document.getElementById('labWx').textContent = t;
   updateInfoMore();
 }
+function syncDisplayToggles(){
+  document.getElementById('displayLabels').checked=labelsOn;
+  document.getElementById('displayFeatures').checked=lab.features;
+  document.getElementById('displayVolcanoes').checked=lab.markers;
+}
+for(const [id,kind]of [['displayLabels','labels'],['displayFeatures','features'],['displayVolcanoes','markers']]){
+ document.getElementById(id).addEventListener('change',e=>{
+  if(kind==='labels')labelsOn=e.target.checked;else lab[kind]=e.target.checked;
+  featMarksVisibility();labelsUpdate();labUpdateButtons();requestRender();
+ });
+}
 function labUpdateButtons() {
+  syncDisplayToggles();
   const tg = (id, on) => document.getElementById(id).classList.toggle('off', !on);
   tg('labCloud', lab.clouds); tg('labPrecip', lab.precip); tg('labMarks', lab.markers);
   tg('tgVolc', lab.markers); tg('tgFeat', lab.features); tg('tgLabel', labelsOn);
@@ -8131,7 +8148,6 @@ function refreshVolcanoPanel() {
 }
 async function eruptVolcano(id,level) {
   if(!volcanoReady())return {ok:false,reason:'計算中です'};
-  clockSetPlaying(false);
   try {const result=await volcanoCall('erupt',{id,level});
     if(!result.ok){document.getElementById('volcanoStatus').textContent=result.reason||'噴火できません';return result;}
     const v=world.volcanoes[id];labReady();const cc=world.climate.cell,c=labCell(v.x,v.y),m=clockMonth(),th=cc.windDir[m*cc.n+c]/256*Math.PI*2;

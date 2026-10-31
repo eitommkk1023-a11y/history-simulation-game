@@ -192,7 +192,6 @@ function refreshVolcanoPanel() {
 }
 async function eruptVolcano(id,level) {
   if(!volcanoReady())return {ok:false,reason:'計算中です'};
-  clockSetPlaying(false);
   try {const result=await volcanoCall('erupt',{id,level});
     if(!result.ok){document.getElementById('volcanoStatus').textContent=result.reason||'噴火できません';return result;}
     const v=world.volcanoes[id];labReady();const cc=world.climate.cell,c=labCell(v.x,v.y),m=clockMonth(),th=cc.windDir[m*cc.n+c]/256*Math.PI*2;
