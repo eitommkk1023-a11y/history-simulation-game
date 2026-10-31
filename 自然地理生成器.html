@@ -244,7 +244,7 @@
   </div>
   <div class="sfilter"><label><input type="checkbox" id="displayWind"> 風の動き</label><label><input type="checkbox" id="displayWaves"> 波の動き</label></div>
   <div style="color:#b9c8d8">矢印は風向・風速、波は風に応じた海面の動き</div>
-  <div class="sfilter" id="meshModes"><button data-mesh="standard">標準</button><button data-mesh="direct">平均化なし</button><button data-mesh="mountain">山岳優先</button></div>
+  <div class="sfilter" id="meshModes"><button class="on" aria-pressed="true" data-mesh="standard">標準</button><button data-mesh="direct">平均化なし</button><button data-mesh="mountain">山岳優先</button></div>
   <div id="displayModes" class="sfilter"></div>
   <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
   </div>
@@ -1773,7 +1773,7 @@ function simulateTectonics(seed, progress) {
       const cx = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6, cy = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6;
       if (blocks.some(b => (b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy) < (volcanoGenerationVersion>=13 ? .035 : .09))) continue;
       const ang = rng() * TAU;
-      blocks.push({ cx, cy, sx: 0.11 + rng() * (volcanoGenerationVersion>=13 ? .18 : .12), sy: 0.08 + rng() * (volcanoGenerationVersion>=13 ? .14 : .1), ca: dcos(ang), sa: dsin(ang) });
+      blocks.push({ split:volcanoGenerationVersion>=13&&rng()<.25, cx, cy, sx: 0.11 + rng() * (volcanoGenerationVersion>=13 ? .18 : .12), sy: 0.08 + rng() * (volcanoGenerationVersion>=13 ? .14 : .1), ca: dcos(ang), sa: dsin(ang) });
     }
     const f = new Float32Array(TN), isMicro = new Uint8Array(TN);
     for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
@@ -1783,7 +1783,9 @@ function simulateTectonics(seed, progress) {
       for (const b of blocks) {
         const dx = wx - b.cx, dy = wy - b.cy;
         const u = (dx * b.ca + dy * b.sa) / b.sx, w2 = (-dx * b.sa + dy * b.ca) / b.sy;
-        v = Math.max(v, 1 - Math.sqrt(u * u + w2 * w2));
+        // Shared warped coordinates keep opposing rift margins related.
+        const rift=b.split ? .65*Math.exp(-30*u*u)*(1-.15*Math.cos(w2*6)):0;
+        v = Math.max(v, 1 - Math.sqrt(u * u + w2 * w2)-rift);
       }
       v += (volcanoGenerationVersion>=13 ? .65 : .45) * fbm(contShape, wx * 4, wy * 4, 5);
       const e = Math.min(nx, ny, 1 - nx, 1 - ny);
@@ -2088,7 +2090,7 @@ function buildLandform(seed, tec, progress) {
   const rng = subRng(seed, 'terrain');
   const coastN = makeNoise(rng), roughN = makeNoise(rng), ridgeN = makeNoise(rng), ridge2N = makeNoise(rng);
   const hillN = makeNoise(rng), floorN = makeNoise(rng), volcN = makeNoise(rng), faultN = makeNoise(rng), warpN = makeNoise(rng);
-  const { crust, thick, age, oro, volc, hot, fault, basin, trench, btype } = tec;
+  const { crust, thick, age, oro, oroAge, volc, hot, fault, basin, trench, btype } = tec;
 
   // ---- 地殻均衡（アイソスタシー）による基本の高さ：厚く軽い大陸地殻ほど高く、古い海洋地殻ほど深い
   const base = new Float32Array(TN);
@@ -5573,6 +5575,7 @@ function heightAt(elev, fx, fy) {
   const step = W / MESH_RES;
   const r = Math.max(1, Math.floor(step / 2));
   const cx = Math.round(fx), cy = Math.round(fy);
+  if(terrainSampling==='direct'){const i=Math.max(0,Math.min(H-1,cy))*W+Math.max(0,Math.min(W-1,cx)),L=lakeId?lakeId[i]:0;return elevationToDisplay(L?Math.max(elev[i],lakeLevels[L]):elev[i],verticalExaggeration,world?world.geology.kmPerBlock*1000:3330);}
   let sum = 0, n = 0;
   for (let y = cy - r; y <= cy + r; y++) {
     if (y < 0 || y >= H) continue;
@@ -7700,6 +7703,7 @@ function applyState(st) {
     showWind=st.view.wind===true;showWaves=st.view.waves===true;document.getElementById("displayWind").checked=showWind;document.getElementById("displayWaves").checked=showWaves;
     terrainSampling=['standard','direct','mountain'].includes(st.view.terrainSampling)?st.view.terrainSampling:'standard';
     setHeightScale(st.view.heightScale || 1.5);
+    document.querySelectorAll("[data-mesh]").forEach(b=>{b.classList.toggle("on",b.dataset.mesh===terrainSampling);b.setAttribute("aria-pressed",String(b.dataset.mesh===terrainSampling));});
     lab.clouds = st.view.clouds !== false; lab.precip = st.view.precip !== false; lab.markers = st.view.markers !== false;
     lab.features = st.view.features !== false; labelsOn = st.view.labels !== false;
     if (st.view.viewMode && VIEW_MODES.includes(st.view.viewMode) && st.view.viewMode !== viewMode) {

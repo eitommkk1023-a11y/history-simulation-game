@@ -5,6 +5,7 @@ const {chromium,webkit}=require('playwright'); const assert=require('node:assert
  const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  try {
+ await page.route('**/*.html',r=>r.fulfill({contentType:'text/html',body:require('node:fs').readFileSync('自然地理生成器.html','utf8').replaceAll('generate(randomSeed())',"generate('549589336')")}));
  await page.goto('http://127.0.0.1:8000/'+encodeURIComponent('自然地理生成器.html'));
  await page.waitForFunction(()=>!!window.__geo,{},{timeout:30000});
  assert.equal(await page.locator('#volcanoPanel').count(),1,'individual eruption controls exist');
@@ -14,6 +15,14 @@ const {chromium,webkit}=require('playwright'); const assert=require('node:assert
  assert.equal(await page.locator('#btnView').textContent(),'表示：地質');
  await page.waitForFunction(()=>window.__geo.world && window.__geo.volcanoReady(),{},{timeout:240000});
  console.log('world ready');
+ const terrain=await page.evaluate(()=>{
+  const g=window.__geo,w=g.world,e=w.elev,n=Math.sqrt(e.length);let land=0,max=-Infinity,edge=true;
+  for(let i=0;i<e.length;i++){if(e[i]>0)land++;if(e[i]>max)max=e[i];if((i<n||i>=e.length-n||i%n===0||i%n===n-1)&&e[i]>=0)edge=false;}
+  const before=Array.from(e),camera=JSON.stringify(g.cam);
+  for(const mode of ['standard','direct','mountain','standard'])g.setTerrainSampling(mode);
+  return {land:land/e.length,max,edge,unchanged:before.every((v,i)=>v===e[i]),camera:camera===JSON.stringify(g.cam)};
+ });console.log('terrain',terrain);assert.ok(terrain.edge&&terrain.unchanged&&terrain.camera);assert.ok(terrain.land>.42&&terrain.land<.47);
+
  await page.locator('#btnView').click();
  for(const id of ['displayLabels','displayFeatures','displayVolcanoes'])await page.locator('#'+id).uncheck();
  const hidden=await page.evaluate(async()=>(await window.__geo.serializeState()).view);
