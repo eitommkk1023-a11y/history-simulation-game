@@ -1766,13 +1766,13 @@ function simulateTectonics(seed, progress) {
   const hot = new Float32Array(TN), fault = new Float32Array(TN), basin = new Float32Array(TN);
   const volcHist = new Float32Array(TN);
   {
-    const nb = 3 + Math.floor(rng() * 4);
+    const nb = volcanoGenerationVersion>=13 ? 1+Math.floor(rng()*6) : 3 + Math.floor(rng() * 4);
     const blocks = [];
     for (let t = 0; blocks.length < nb && t < 2000; t++) {
-      const cx = 0.2 + rng() * 0.6, cy = 0.2 + rng() * 0.6;
-      if (blocks.some(b => (b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy) < 0.09)) continue;
+      const cx = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6, cy = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6;
+      if (blocks.some(b => (b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy) < (volcanoGenerationVersion>=13 ? .035 : .09))) continue;
       const ang = rng() * TAU;
-      blocks.push({ cx, cy, sx: 0.11 + rng() * 0.12, sy: 0.08 + rng() * 0.1, ca: dcos(ang), sa: dsin(ang) });
+      blocks.push({ cx, cy, sx: 0.11 + rng() * (volcanoGenerationVersion>=13 ? .18 : .12), sy: 0.08 + rng() * (volcanoGenerationVersion>=13 ? .14 : .1), ca: dcos(ang), sa: dsin(ang) });
     }
     const f = new Float32Array(TN), isMicro = new Uint8Array(TN);
     for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
@@ -1784,7 +1784,7 @@ function simulateTectonics(seed, progress) {
         const u = (dx * b.ca + dy * b.sa) / b.sx, w2 = (-dx * b.sa + dy * b.ca) / b.sy;
         v = Math.max(v, 1 - Math.sqrt(u * u + w2 * w2));
       }
-      v += 0.45 * fbm(contShape, wx * 4, wy * 4, 5);
+      v += (volcanoGenerationVersion>=13 ? .65 : .45) * fbm(contShape, wx * 4, wy * 4, 5);
       const e = Math.min(nx, ny, 1 - nx, 1 - ny);
       v -= 2 * (1 - smoothstep(0.02, 0.16, e));
       f[y * TW + x] = v;
@@ -4559,8 +4559,8 @@ function generateLandmarksGeo(seed, tec, ter, progress) {
     }
   }
 
-  // ---- 3. 内海と海峡：大陸の内側に広い海をつくり、細い海峡で外の海とつなぐ（地中海・黒海のような海）
-  {
+  // ---- 3. 旧版の強制内海・海峡（新生成版では自然に存在する海域を使用）
+  if(volcanoGenerationVersion<13) {
     let best = -1, bs = -1;
     for (let k = 0; k < 4000; k++) {
       const x = 200 + Math.floor(rng() * (W - 400)), y = 200 + Math.floor(rng() * (H - 400)), i = y * W + x;
