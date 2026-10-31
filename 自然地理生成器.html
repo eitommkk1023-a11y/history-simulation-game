@@ -244,6 +244,7 @@
   </div>
   <div class="sfilter"><label><input type="checkbox" id="displayWind"> 風の動き</label><label><input type="checkbox" id="displayWaves"> 波の動き</label></div>
   <div style="color:#b9c8d8">矢印は風向・風速、波は風に応じた海面の動き</div>
+  <div class="sfilter" id="meshModes"><button data-mesh="standard">標準</button><button data-mesh="direct">平均化なし</button><button data-mesh="mountain">山岳優先</button></div>
   <div id="displayModes" class="sfilter"></div>
   <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
   </div>
@@ -5566,6 +5567,7 @@ let lakeId = null, lakeLevels = null;
 function elevationToDisplay(e, scale, metresPerUnit) {
   return e / metresPerUnit * scale;
 }
+let terrainSampling="standard";
 function heightAt(elev, fx, fy) {
   // 表示用の高さ：周辺を平均してエイリアシングを抑える
   const step = W / MESH_RES;
@@ -5582,7 +5584,10 @@ function heightAt(elev, fx, fy) {
       sum += L ? Math.max(elev[i], lakeLevels[L]) : elev[i]; n++;
     }
   }
-  const e = sum / n;
+  const ci=Math.max(0,Math.min(H-1,cy))*W+Math.max(0,Math.min(W-1,cx));
+  const L=lakeId?lakeId[ci]:0,direct=L?Math.max(elev[ci],lakeLevels[L]):elev[ci];
+  const weight=terrainSampling==='direct'?1:terrainSampling==='mountain'?Math.max(0,Math.min(.85,(direct-700)/3300)):0;
+  const e = (sum/n)*(1-weight)+direct*weight;
   return elevationToDisplay(e, verticalExaggeration, world ? world.geology.kmPerBlock * 1000 : 3330);
 }
 
@@ -5842,6 +5847,19 @@ function buildRivers(pts, starts) {
   scene.add(riverMesh);
 }
 
+function setTerrainSampling(mode){
+ if(!['standard','direct','mountain'].includes(mode))return;
+ terrainSampling=mode;
+ document.querySelectorAll('[data-mesh]').forEach(b=>{b.classList.toggle('on',b.dataset.mesh===mode);b.setAttribute('aria-pressed',String(b.dataset.mesh===mode));});
+ if(!world||!terrainMesh)return;
+ const g=terrainMesh.geometry,p=g.attributes.position;
+ for(let i=0;i<p.count;i++){const z=heightAt(world.elev,(p.getX(i)+W/2)*(W-1)/W,(p.getZ(i)+H/2)*(H-1)/H);p.setY(i,z);meshHeights[i]=z;}
+ p.needsUpdate=true;g.computeVertexNormals();g.computeBoundingSphere();
+ buildRivers(world.riverPts,world.riverStarts);volcMarkersBuild();featMarksBuild();depMarksBuild();rebuildVolcanoDetail(true);
+ if(sim)for(const plume of sim.plumes){const y=Math.max(1,meshHeightAtWorld(plume.X,plume.Z)),delta=y-plume.Y;plume.Y=y;for(const q of plume.parts)if(q.life>=0)q.y+=delta;}
+ labelsUpdate();requestRender();
+}
+for(const b of document.querySelectorAll('[data-mesh]'))bindTap(b,()=>setTerrainSampling(b.dataset.mesh));
 function buildTerrain(elev, biome) {
   if (terrainMesh) {
     scene.remove(terrainMesh);
@@ -7652,7 +7670,7 @@ function serializeBaseState() {
     clock: { day: clock.day, mode: clock.mode, speed: clock.speed },
     history: { list: history.list, nextId: history.nextId },
     names: names.overrides,
-    view: { wind:showWind, waves:showWaves, heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
+    view: { terrainSampling, wind:showWind, waves:showWaves, heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
     fauna: fauna ? { kmPerCell: fauna.kmPerCell, areaKm2: fauna.areaKm2, species: Object.fromEntries(Object.entries(fauna.species).map(([k, S]) =>
       [k, { nextId: S.nextId, rngState: S.rngState, pops: S.pops }])) } : null,
     hunt: { active: faHunt.active, hunters: faHunt.hunters, skill: faHunt.skill, time: faHunt.time, cell: faHunt.cell, total: faHunt.total, rngState: faHunt.rng ? faHunt.rng.state() : null },
@@ -7680,6 +7698,7 @@ function applyState(st) {
   for (const e of names.list) { const o = names.overrides[e.key]; e.user = o ? o.user : null; e.hist = o ? o.hist || [] : []; }
   if (st.view) {
     showWind=st.view.wind===true;showWaves=st.view.waves===true;document.getElementById("displayWind").checked=showWind;document.getElementById("displayWaves").checked=showWaves;
+    terrainSampling=['standard','direct','mountain'].includes(st.view.terrainSampling)?st.view.terrainSampling:'standard';
     setHeightScale(st.view.heightScale || 1.5);
     lab.clouds = st.view.clouds !== false; lab.precip = st.view.precip !== false; lab.markers = st.view.markers !== false;
     lab.features = st.view.features !== false; labelsOn = st.view.labels !== false;
@@ -8251,7 +8270,7 @@ function serializeState() {
 // END VOLCANO UI
 
 // テスト・将来の拡張用に現在の世界データを参照できるようにする
-window.__geo = { weatherGlyphs:()=>weatherGlyphs, labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
+window.__geo = { setTerrainSampling, weatherGlyphs:()=>weatherGlyphs, labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
 
 updateRiverPix();
 resetCamera();
