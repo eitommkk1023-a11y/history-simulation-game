@@ -219,9 +219,9 @@
 #toolbar button { flex-shrink: 0; min-height: 44px; }
 #toolbar input { flex-shrink: 0; }
 .sheet, #info, #timebar { top: calc(64px + var(--safe-t)); }
-.modal .mbox { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.modal .mbox { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
 @media (pointer: coarse) { .modal button { min-height: 44px; } }
-#displayMenu { max-height: calc(100dvh - 100px); overflow-y: auto; }
+#displayMenu { max-height: calc(100vh - 100px); max-height: calc(100dvh - 100px); overflow-y: auto; }
 #displayMenu button, #displayMenu select { min-height: 44px; font-size: 16px; }
 #displayMenu select { background: #24384f; color: #e8eef5; border-radius: 8px; padding: 8px; }
 </style>
@@ -692,7 +692,9 @@ const VolcanoCore = (() => {
       const transfers=[];
       for(const k of Array.from(erodible).sort((a,b)=>a-b)){
         const c=cells.get(k);if(!c)continue;
-        if(c.ash+c.pumice+c.pyro<=1e-10){erodible.delete(k);continue;}
+        // Sub-millimetre loose cover remains in the mass/terrain ledger but is
+        // below this grid's transport resolution. New deposition reactivates it.
+        if((c.ash*EXPANSION.ash+c.pumice*EXPANSION.pumice+c.pyroBulk)/area<.001){erodible.delete(k);continue;}
         const w=weather((c.x+.5)/REFINE,(c.y+.5)/REFINE), z=surfaceAt(c.x,c.y), near=downhill(c.x,c.y,1,false);
         const fall=inside(near.x,near.y)?Math.max(0,z-surfaceAt(near.x,near.y)):edge;
         const slope=fall/edge, water=river?.water?.[baseIndex(c.x,c.y)]||0;
@@ -7957,6 +7959,7 @@ function volcanoCall(cmd, payload) {
 function disposeVolcanoRuntime() {
   if (volcanoWorker) volcanoWorker.terminate(); volcanoWorker = null;
   for (const pending of volcanoWaiting.values()) pending.reject(new Error('世界を切り替えました'));
+  volcanoBaseElev=volcanoBaseType=volcanoBaseBiome=volcanoBaseSea=volcanoBaseEnv=null;volcanoBaseVolcanoes=[];volcanoBaseRegions.clear();
   volcanoWaiting.clear(); volcanoFault = null; volcanoDetail = []; volcanoSky = []; volcanoTargetDay = -1;
   for (const mesh of volcanoMeshes) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
   volcanoMeshes = [];volcanoPatchMap.clear();volcanoFineLookup.clear();volcanoMaskData.fill(0);volcanoMaskTexture.needsUpdate=true; document.getElementById('volcanoPanel').classList.remove('show');

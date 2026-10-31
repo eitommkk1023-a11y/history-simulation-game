@@ -250,3 +250,11 @@ test('six repeated eruptions at the game scale build broad islands and distingui
  };
  assert.ok(run('shield')>run('strato'));
 });
+
+test('submillimetre deposits retain mass without indefinite erosion bookkeeping',()=>{
+ const v={...fixture().snapshot().volcanoes[0],magmaVolume:100};
+ const e=fixture({metresPerBlock:3330,volcanoes:[v]});e.erupt(0,1);e.advanceTo(360);
+ const before=e.measure();e.advanceTo(36000);const after=conserved(e);
+ assert.equal(after.totalCells,before.totalCells);
+ assert.equal(after.erodedDRE,before.erodedDRE);
+});

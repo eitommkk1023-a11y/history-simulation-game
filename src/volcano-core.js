@@ -375,7 +375,9 @@ const VolcanoCore = (() => {
       const transfers=[];
       for(const k of Array.from(erodible).sort((a,b)=>a-b)){
         const c=cells.get(k);if(!c)continue;
-        if(c.ash+c.pumice+c.pyro<=1e-10){erodible.delete(k);continue;}
+        // Sub-millimetre loose cover remains in the mass/terrain ledger but is
+        // below this grid's transport resolution. New deposition reactivates it.
+        if((c.ash*EXPANSION.ash+c.pumice*EXPANSION.pumice+c.pyroBulk)/area<.001){erodible.delete(k);continue;}
         const w=weather((c.x+.5)/REFINE,(c.y+.5)/REFINE), z=surfaceAt(c.x,c.y), near=downhill(c.x,c.y,1,false);
         const fall=inside(near.x,near.y)?Math.max(0,z-surfaceAt(near.x,near.y)):edge;
         const slope=fall/edge, water=river?.water?.[baseIndex(c.x,c.y)]||0;

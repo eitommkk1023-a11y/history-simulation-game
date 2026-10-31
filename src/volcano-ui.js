@@ -23,6 +23,7 @@ function volcanoCall(cmd, payload) {
 function disposeVolcanoRuntime() {
   if (volcanoWorker) volcanoWorker.terminate(); volcanoWorker = null;
   for (const pending of volcanoWaiting.values()) pending.reject(new Error('世界を切り替えました'));
+  volcanoBaseElev=volcanoBaseType=volcanoBaseBiome=volcanoBaseSea=volcanoBaseEnv=null;volcanoBaseVolcanoes=[];volcanoBaseRegions.clear();
   volcanoWaiting.clear(); volcanoFault = null; volcanoDetail = []; volcanoSky = []; volcanoTargetDay = -1;
   for (const mesh of volcanoMeshes) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
   volcanoMeshes = [];volcanoPatchMap.clear();volcanoFineLookup.clear();volcanoMaskData.fill(0);volcanoMaskTexture.needsUpdate=true; document.getElementById('volcanoPanel').classList.remove('show');
