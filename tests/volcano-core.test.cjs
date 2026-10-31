@@ -232,3 +232,21 @@ test('pressure and viscosity affect discharge duration and partition',()=>{
  const a=low.erupt(0,2),b=high.erupt(0,2);assert.notEqual(a.durationDays,b.durationDays);
  const thick=fixture({volcanoes:[{...v,viscosity:1e8}]});assert.notEqual(thick.erupt(0,2).durationDays,b.durationDays);
 });
+
+
+test('six repeated eruptions at the game scale build broad islands and distinguish shield from strato',()=>{
+ const run=morphology=>{
+  const basalt=morphology==='shield';
+  const v={...fixture().snapshot().volcanoes[0],morphology,composition:basalt?'basalt':'andesite',setting:'submarine',capacity:2e9,magmaVolume:2e9,temperature:basalt?1180:1000,viscosity:basalt?250:1e5};
+  const e=fixture({metresPerBlock:3330,terrain:()=>-5,volcanoes:[v]});
+  let first=0;
+  for(let n=0;n<6;n++){assert.equal(e.erupt(0,3).ok,true);e.advanceTo((n+1)*60);conserved(e);if(n===0)first=e.drainChanges().detail.filter(p=>p.lava>.1).length;}
+  const d=e.drainChanges(),wetToDry=d.cells.filter(p=>p[1]>0);
+  assert.ok(wetToDry.length>=2,'island spans more than one base cell');
+  const footprint=d.detail.filter(p=>p.lava>.1).length;
+  assert.ok(footprint>first,'repeated eruption expands laterally');
+  assert.ok(Math.max(...d.detail.map(p=>p.z))<200,'no isolated kilometre-scale spike');
+  return footprint;
+ };
+ assert.ok(run('shield')>run('strato'));
+});
