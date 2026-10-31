@@ -1403,8 +1403,8 @@ function faunaClone(F) {
 </script>
 <script id="generator-src" type="text/plain">
 'use strict';
-const GEN_VERSION = 13;
-let volcanoGenerationVersion = 13;
+const GEN_VERSION = 14;
+let volcanoGenerationVersion = 14;
 const W = 3000, H = 3000, N = W * H;
 
 // 陸地の総面積は 2000×2000 ブロック分。大陸：島 ＝ 60：10 の比率で分ける
@@ -2161,9 +2161,12 @@ function buildLandform(seed, tec, progress) {
     const o = sampleGeo(oro, wx, wy);
     if (o > 100) {
       // 山脈：尾根状ノイズで稜線と谷を刻む
-      const r = ridged(ridgeN, x * 0.011, y * 0.011, 4);
       const young=volcanoGenerationVersion>=13 ? 1-smoothstep(20,180,sampleGeo(oroAge,wx,wy)) : 0;
-      e += o * (volcanoGenerationVersion>=13 ? .06+(1.05+.3*young)*r*r : .2+.8*r*r) + o * .15 * ridged(ridge2N,x*.035,y*.035,3);
+      // Resolve young ridges on the existing ~19.5km mesh; sharpen relief, not display scale.
+      const frequency=volcanoGenerationVersion>=14 ? .011-.003*young : .011;
+      const r = ridged(ridgeN, x * frequency, y * frequency, 4);
+      const relief=r*r*(volcanoGenerationVersion>=14 ? 1+.65*young*(r-.45) : 1);
+      e += o * (volcanoGenerationVersion>=13 ? .06+(1.05+.3*young)*relief : .2+.8*r*r) + o * .15 * ridged(ridge2N,x*.035,y*.035,3);
     }
     const v = sampleGeo(volc, wx, wy) + sampleGeo(hot, wx, wy) * (crust[geoIndexAt(x, y)] === CRUST.OCEANIC ? 1 : 0.2);
     if (v > 60) {
@@ -5357,7 +5360,7 @@ function generateWorld(seed, report) {
 
 self.onmessage = function (e) {
   const { id, seed, genVersion } = e.data;
-  volcanoGenerationVersion = [11,12].includes(genVersion) ? genVersion : 13;
+  volcanoGenerationVersion = [11,12,13].includes(genVersion) ? genVersion : 14;
   try {
     const w = generateWorld(seed >>> 0, (stage) => self.postMessage({ id, kind: 'progress', stage }));
     self.postMessage({ id, kind: 'done', elev: w.elev, type: w.type, regionId: w.regionId, mtnId: w.mtnId, seaId: w.seaId,
@@ -6006,7 +6009,7 @@ function seedToInt(str) {
 function randomSeed() { return String(1 + Math.floor(Math.random() * 999999999)); }
 
 let currentSeed = null, previousSeed = null;
-function generate(seedStr, genVersion = 13) {
+function generate(seedStr, genVersion = 14) {
   if (busy) return;
   clock.playing = false; clock.pending = 0; disposeVolcanoRuntime();
   busy = true; setButtons();
@@ -7761,7 +7764,7 @@ function autoSaveMaybe(force) {
 // 読み込み：Seed から世界を作り直してから、保存した変化を当てはめる
 let pendingLoad = null;
 function loadState(st) {
-  if (!st || st.format !== SAVE_FORMAT || ![11,12,13].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
+  if (!st || st.format !== SAVE_FORMAT || ![11,12,13,14].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
   if(busy){menuMsg('世界の生成が終わるまでお待ちください');return;}
   pendingLoad=st; menuShow(false); generate(st.seed,st.genVersion);
 }
