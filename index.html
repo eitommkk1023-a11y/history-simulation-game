@@ -244,6 +244,7 @@
   </div>
   <div class="sfilter"><label><input type="checkbox" id="displayWind"> 風の動き</label><label><input type="checkbox" id="displayWaves"> 波の動き</label></div>
   <div style="color:#b9c8d8">矢印は風向・風速、波は風に応じた海面の動き</div>
+  <div class="sfilter" id="meshModes"><button class="on" aria-pressed="true" data-mesh="standard">標準</button><button data-mesh="direct">平均化なし</button><button data-mesh="mountain">山岳優先</button></div>
   <div id="displayModes" class="sfilter"></div>
   <div class="sfilter"><label>高さ倍率 <select id="heightScale" aria-label="高さ倍率"><option value="1">1倍</option><option value="1.5" selected>1.5倍</option><option value="2">2倍</option><option value="10">10倍</option><option value="20">20倍</option></select></label></div>
   </div>
@@ -781,7 +782,7 @@ const VolcanoCore = (() => {
         const x=(c.x+.5)/REFINE,y=(c.y+.5)/REFINE;
         detail.push({x,y,z:baseHeight(x,y)+bulk(c)/area,lava:(c.liquid+c.solid)/area,
           ash:c.ash*3.5/area,pumice:c.pumice*5/area,pyro:c.pyroBulk/area,
-          active:c.liquid>0,temperature:c.liquid>0?c.interior:c.surface});
+          active:c.liquid>0,surfaceTemperature:c.surface,liquidFraction:c.liquid/Math.max(1e-30,c.liquid+c.solid),temperature:c.liquid>0?c.interior:c.surface});
       }
       const output=[];
       for(const bi of Array.from(dirty).sort((a,b)=>a-b)){
@@ -1402,8 +1403,8 @@ function faunaClone(F) {
 </script>
 <script id="generator-src" type="text/plain">
 'use strict';
-const GEN_VERSION = 12;
-let volcanoGenerationVersion = 12;
+const GEN_VERSION = 14;
+let volcanoGenerationVersion = 14;
 const W = 3000, H = 3000, N = W * H;
 
 // 陸地の総面積は 2000×2000 ブロック分。大陸：島 ＝ 60：10 の比率で分ける
@@ -1766,13 +1767,13 @@ function simulateTectonics(seed, progress) {
   const hot = new Float32Array(TN), fault = new Float32Array(TN), basin = new Float32Array(TN);
   const volcHist = new Float32Array(TN);
   {
-    const nb = 3 + Math.floor(rng() * 4);
+    const nb = volcanoGenerationVersion>=13 ? 1+Math.floor(rng()*6) : 3 + Math.floor(rng() * 4);
     const blocks = [];
     for (let t = 0; blocks.length < nb && t < 2000; t++) {
-      const cx = 0.2 + rng() * 0.6, cy = 0.2 + rng() * 0.6;
-      if (blocks.some(b => (b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy) < 0.09)) continue;
+      const cx = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6, cy = volcanoGenerationVersion>=13 ? .15+rng()*.7 : .2+rng()*.6;
+      if (blocks.some(b => (b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy) < (volcanoGenerationVersion>=13 ? .035 : .09))) continue;
       const ang = rng() * TAU;
-      blocks.push({ cx, cy, sx: 0.11 + rng() * 0.12, sy: 0.08 + rng() * 0.1, ca: dcos(ang), sa: dsin(ang) });
+      blocks.push({ split:volcanoGenerationVersion>=13&&rng()<.25, cx, cy, sx: 0.11 + rng() * (volcanoGenerationVersion>=13 ? .18 : .12), sy: 0.08 + rng() * (volcanoGenerationVersion>=13 ? .14 : .1), ca: dcos(ang), sa: dsin(ang) });
     }
     const f = new Float32Array(TN), isMicro = new Uint8Array(TN);
     for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
@@ -1782,9 +1783,11 @@ function simulateTectonics(seed, progress) {
       for (const b of blocks) {
         const dx = wx - b.cx, dy = wy - b.cy;
         const u = (dx * b.ca + dy * b.sa) / b.sx, w2 = (-dx * b.sa + dy * b.ca) / b.sy;
-        v = Math.max(v, 1 - Math.sqrt(u * u + w2 * w2));
+        // Shared warped coordinates keep opposing rift margins related.
+        const rift=b.split ? .65*Math.exp(-30*u*u)*(1-.15*Math.cos(w2*6)):0;
+        v = Math.max(v, 1 - Math.sqrt(u * u + w2 * w2)-rift);
       }
-      v += 0.45 * fbm(contShape, wx * 4, wy * 4, 5);
+      v += (volcanoGenerationVersion>=13 ? .65 : .45) * fbm(contShape, wx * 4, wy * 4, 5);
       const e = Math.min(nx, ny, 1 - nx, 1 - ny);
       v -= 2 * (1 - smoothstep(0.02, 0.16, e));
       f[y * TW + x] = v;
@@ -1968,7 +1971,7 @@ function simulateTectonics(seed, progress) {
         stats.collisions++;
         stampGeo(thick, qx, qy, 5, 0.045 * k, (i) => crust[i] !== CRUST.OCEANIC);
         stampGeo(thick, qx + rx * 9, qy + ry * 9, 8, 0.03 * k, (i) => crust[i] !== CRUST.OCEANIC && onOver(i));
-        stampGeo(oro, qx + rx * 2, qy + ry * 2, 3.2, 14 * k);
+        stampGeo(oro, qx + rx * 2, qy + ry * 2, volcanoGenerationVersion>=13 ? 2.8+Math.min(3,k*.4) : 3.2, 14 * k);
         stampGeo(basin, qx - rx * 7, qy - ry * 7, 4, 4 * k, (i) => crust[i] !== CRUST.OCEANIC);
         stampGeo(oroAge, qx, qy, 6, -1e4, null);
       } else if (overCont) {
@@ -2087,7 +2090,7 @@ function buildLandform(seed, tec, progress) {
   const rng = subRng(seed, 'terrain');
   const coastN = makeNoise(rng), roughN = makeNoise(rng), ridgeN = makeNoise(rng), ridge2N = makeNoise(rng);
   const hillN = makeNoise(rng), floorN = makeNoise(rng), volcN = makeNoise(rng), faultN = makeNoise(rng), warpN = makeNoise(rng);
-  const { crust, thick, age, oro, volc, hot, fault, basin, trench, btype } = tec;
+  const { crust, thick, age, oro, oroAge, volc, hot, fault, basin, trench, btype } = tec;
 
   // ---- 地殻均衡（アイソスタシー）による基本の高さ：厚く軽い大陸地殻ほど高く、古い海洋地殻ほど深い
   const base = new Float32Array(TN);
@@ -2158,8 +2161,12 @@ function buildLandform(seed, tec, progress) {
     const o = sampleGeo(oro, wx, wy);
     if (o > 100) {
       // 山脈：尾根状ノイズで稜線と谷を刻む
-      const r = ridged(ridgeN, x * 0.011, y * 0.011, 4);
-      e += o * (0.2 + 0.8 * r * r) + o * 0.15 * ridged(ridge2N, x * 0.035, y * 0.035, 3);
+      const young=volcanoGenerationVersion>=13 ? 1-smoothstep(20,180,sampleGeo(oroAge,wx,wy)) : 0;
+      // Resolve young ridges on the existing ~19.5km mesh; sharpen relief, not display scale.
+      const frequency=volcanoGenerationVersion>=14 ? .011-.003*young : .011;
+      const r = ridged(ridgeN, x * frequency, y * frequency, 4);
+      const relief=r*r*(volcanoGenerationVersion>=14 ? 1+.65*young*(r-.45) : 1);
+      e += o * (volcanoGenerationVersion>=13 ? .06+(1.05+.3*young)*relief : .2+.8*r*r) + o * .15 * ridged(ridge2N,x*.035,y*.035,3);
     }
     const v = sampleGeo(volc, wx, wy) + sampleGeo(hot, wx, wy) * (crust[geoIndexAt(x, y)] === CRUST.OCEANIC ? 1 : 0.2);
     if (v > 60) {
@@ -2227,7 +2234,10 @@ function buildLandform(seed, tec, progress) {
       if (e < 2) e = 2;
     }
     // 極端な値をなだらかに抑える（最高峰は 8000m 台、最深部は 10000m 台まで）
-    if (e > 4500) e = 4500 + (e - 4500) * 0.3;
+    if (e > 4500) {
+      if(volcanoGenerationVersion<13)e=4500+(e-4500)*.3;
+      else {const gi=geoIndexAt(i%W,Math.floor(i/W));const support=smoothstep(42,65,thick[gi])*(1-smoothstep(25,160,oroAge[gi]));const cap=5600+3400*support;e=4500+(cap-4500)*(1-Math.exp(-(e-4500)/(cap-4500)));}
+    }
     if (e < -8000) e = -8000 + (e + 8000) * 0.3;
     elev[i] = e;
   }
@@ -4521,7 +4531,7 @@ function generateLandmarksGeo(seed, tec, ter, progress) {
       let sx = 0, sy = 0;
       for (let i = 0; i < N; i++) if (lab.labels[i] === bk) { sx += i % W; sy += (i - i % W) / W; }
       feats.push({ kind: 'plateau', x: Math.round(sx / big), y: Math.round(sy / big) });
-    } else {
+    } else if(volcanoGenerationVersion<13) {
       // 候補：海から遠く、すでにある程度高い所（山脈の背後）
       let best = -1, bs = -1;
       for (let y = 200; y < H - 200; y += 12) for (let x = 200; x < W - 200; x += 12) {
@@ -4555,8 +4565,8 @@ function generateLandmarksGeo(seed, tec, ter, progress) {
     }
   }
 
-  // ---- 3. 内海と海峡：大陸の内側に広い海をつくり、細い海峡で外の海とつなぐ（地中海・黒海のような海）
-  {
+  // ---- 3. 旧版の強制内海・海峡（新生成版では自然に存在する海域を使用）
+  if(volcanoGenerationVersion<13) {
     let best = -1, bs = -1;
     for (let k = 0; k < 4000; k++) {
       const x = 200 + Math.floor(rng() * (W - 400)), y = 200 + Math.floor(rng() * (H - 400)), i = y * W + x;
@@ -5350,7 +5360,7 @@ function generateWorld(seed, report) {
 
 self.onmessage = function (e) {
   const { id, seed, genVersion } = e.data;
-  volcanoGenerationVersion = genVersion === 11 ? 11 : 12;
+  volcanoGenerationVersion = [11,12,13].includes(genVersion) ? genVersion : 14;
   try {
     const w = generateWorld(seed >>> 0, (stage) => self.postMessage({ id, kind: 'progress', stage }));
     self.postMessage({ id, kind: 'done', elev: w.elev, type: w.type, regionId: w.regionId, mtnId: w.mtnId, seaId: w.seaId,
@@ -5562,11 +5572,13 @@ let lakeId = null, lakeLevels = null;
 function elevationToDisplay(e, scale, metresPerUnit) {
   return e / metresPerUnit * scale;
 }
+let terrainSampling="standard";
 function heightAt(elev, fx, fy) {
   // 表示用の高さ：周辺を平均してエイリアシングを抑える
   const step = W / MESH_RES;
   const r = Math.max(1, Math.floor(step / 2));
   const cx = Math.round(fx), cy = Math.round(fy);
+  if(terrainSampling==='direct'){const i=Math.max(0,Math.min(H-1,cy))*W+Math.max(0,Math.min(W-1,cx)),L=lakeId?lakeId[i]:0;return elevationToDisplay(L?Math.max(elev[i],lakeLevels[L]):elev[i],verticalExaggeration,world?world.geology.kmPerBlock*1000:3330);}
   let sum = 0, n = 0;
   for (let y = cy - r; y <= cy + r; y++) {
     if (y < 0 || y >= H) continue;
@@ -5578,7 +5590,10 @@ function heightAt(elev, fx, fy) {
       sum += L ? Math.max(elev[i], lakeLevels[L]) : elev[i]; n++;
     }
   }
-  const e = sum / n;
+  const ci=Math.max(0,Math.min(H-1,cy))*W+Math.max(0,Math.min(W-1,cx));
+  const L=lakeId?lakeId[ci]:0,direct=L?Math.max(elev[ci],lakeLevels[L]):elev[ci];
+  const weight=terrainSampling==='direct'?1:terrainSampling==='mountain'?Math.max(0,Math.min(.85,(direct-700)/3300)):0;
+  const e = (sum/n)*(1-weight)+direct*weight;
   return elevationToDisplay(e, verticalExaggeration, world ? world.geology.kmPerBlock * 1000 : 3330);
 }
 
@@ -5838,6 +5853,19 @@ function buildRivers(pts, starts) {
   scene.add(riverMesh);
 }
 
+function setTerrainSampling(mode){
+ if(!['standard','direct','mountain'].includes(mode))return;
+ terrainSampling=mode;
+ document.querySelectorAll('[data-mesh]').forEach(b=>{b.classList.toggle('on',b.dataset.mesh===mode);b.setAttribute('aria-pressed',String(b.dataset.mesh===mode));});
+ if(!world||!terrainMesh)return;
+ const g=terrainMesh.geometry,p=g.attributes.position;
+ for(let i=0;i<p.count;i++){const z=heightAt(world.elev,(p.getX(i)+W/2)*(W-1)/W,(p.getZ(i)+H/2)*(H-1)/H);p.setY(i,z);meshHeights[i]=z;}
+ p.needsUpdate=true;g.computeVertexNormals();g.computeBoundingSphere();
+ buildRivers(world.riverPts,world.riverStarts);volcMarkersBuild();featMarksBuild();depMarksBuild();rebuildVolcanoDetail(true);
+ if(sim)for(const plume of sim.plumes){const y=Math.max(1,meshHeightAtWorld(plume.X,plume.Z)),delta=y-plume.Y;plume.Y=y;for(const q of plume.parts)if(q.life>=0)q.y+=delta;}
+ labelsUpdate();requestRender();
+}
+for(const b of document.querySelectorAll('[data-mesh]'))bindTap(b,()=>setTerrainSampling(b.dataset.mesh));
 function buildTerrain(elev, biome) {
   if (terrainMesh) {
     scene.remove(terrainMesh);
@@ -5981,7 +6009,7 @@ function seedToInt(str) {
 function randomSeed() { return String(1 + Math.floor(Math.random() * 999999999)); }
 
 let currentSeed = null, previousSeed = null;
-function generate(seedStr, genVersion = 12) {
+function generate(seedStr, genVersion = 14) {
   if (busy) return;
   clock.playing = false; clock.pending = 0; disposeVolcanoRuntime();
   busy = true; setButtons();
@@ -7648,7 +7676,7 @@ function serializeBaseState() {
     clock: { day: clock.day, mode: clock.mode, speed: clock.speed },
     history: { list: history.list, nextId: history.nextId },
     names: names.overrides,
-    view: { wind:showWind, waves:showWaves, heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
+    view: { terrainSampling, wind:showWind, waves:showWaves, heightScale: verticalExaggeration, viewMode, clouds: lab.clouds, precip: lab.precip, markers: lab.markers, features: lab.features, labels: labelsOn },
     fauna: fauna ? { kmPerCell: fauna.kmPerCell, areaKm2: fauna.areaKm2, species: Object.fromEntries(Object.entries(fauna.species).map(([k, S]) =>
       [k, { nextId: S.nextId, rngState: S.rngState, pops: S.pops }])) } : null,
     hunt: { active: faHunt.active, hunters: faHunt.hunters, skill: faHunt.skill, time: faHunt.time, cell: faHunt.cell, total: faHunt.total, rngState: faHunt.rng ? faHunt.rng.state() : null },
@@ -7676,7 +7704,9 @@ function applyState(st) {
   for (const e of names.list) { const o = names.overrides[e.key]; e.user = o ? o.user : null; e.hist = o ? o.hist || [] : []; }
   if (st.view) {
     showWind=st.view.wind===true;showWaves=st.view.waves===true;document.getElementById("displayWind").checked=showWind;document.getElementById("displayWaves").checked=showWaves;
+    terrainSampling=['standard','direct','mountain'].includes(st.view.terrainSampling)?st.view.terrainSampling:'standard';
     setHeightScale(st.view.heightScale || 1.5);
+    document.querySelectorAll("[data-mesh]").forEach(b=>{b.classList.toggle("on",b.dataset.mesh===terrainSampling);b.setAttribute("aria-pressed",String(b.dataset.mesh===terrainSampling));});
     lab.clouds = st.view.clouds !== false; lab.precip = st.view.precip !== false; lab.markers = st.view.markers !== false;
     lab.features = st.view.features !== false; labelsOn = st.view.labels !== false;
     if (st.view.viewMode && VIEW_MODES.includes(st.view.viewMode) && st.view.viewMode !== viewMode) {
@@ -7734,7 +7764,7 @@ function autoSaveMaybe(force) {
 // 読み込み：Seed から世界を作り直してから、保存した変化を当てはめる
 let pendingLoad = null;
 function loadState(st) {
-  if (!st || st.format !== SAVE_FORMAT || ![11,12].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
+  if (!st || st.format !== SAVE_FORMAT || ![11,12,13,14].includes(st.genVersion) || !st.clock || !Number.isInteger(st.clock.day) || st.clock.day<0 || !st.history || !Array.isArray(st.history.list)) {menuMsg('この記録は読み込めません（形式・生成版が不正です）');return;}
   if(busy){menuMsg('世界の生成が終わるまでお待ちください');return;}
   pendingLoad=st; menuShow(false); generate(st.seed,st.genVersion);
 }
@@ -7854,6 +7884,7 @@ function labFrame(now) {
   // 目印は近づいた時だけ（カメラの距離が変わったら表示を切り替える）
   const mk = (lab.features && cam.dist < FEATURE_MINOR_DIST ? 1 : 0) + (lab.features && cam.dist < FEATURE_MAJOR_DIST ? 2 : 0) + (lab.markers && cam.dist < VOLC_MARK_DIST ? 4 : 0);
   if (mk !== lab.markState) { lab.markState = mk; featMarksVisibility(); requestRender(); }
+  refreshVolcanoFocus();
   updateVolcanoSky();
   let changed = clockFrame(dt);
   if (!sim) { if (precip) precip.rain.visible = precip.snow.visible = false; return changed; }
@@ -8014,6 +8045,7 @@ let volcanoBaseElev = null, volcanoBaseType = null, volcanoBaseBiome = null, vol
 let volcanoBaseVolcanoes = [], volcanoBaseRegions = new Map(), volcanoBaseEnv = null;
 let volcanoDetail = [], volcanoSky = [], volcanoLastMetrics = {}, volcanoTargetDay = -1;
 let volcanoSelected = -1, volcanoMeshes = [], volcanoStateVersion = 0;
+let volcanoFocus=-1;
 let volcanoPatchMap = new Map(), volcanoFineLookup = new Map();
 const volcanoMaskData = new Uint8Array(W*H);
 const volcanoMaskTexture = new THREE.DataTexture(volcanoMaskData,W,H,THREE.LuminanceFormat);
@@ -8033,6 +8065,7 @@ function disposeVolcanoRuntime() {
   if (volcanoWorker) volcanoWorker.terminate(); volcanoWorker = null;
   for (const pending of volcanoWaiting.values()) pending.reject(new Error('世界を切り替えました'));
   volcanoBaseElev=volcanoBaseType=volcanoBaseBiome=volcanoBaseSea=volcanoBaseEnv=null;volcanoBaseVolcanoes=[];volcanoBaseRegions.clear();
+  volcanoFocus=-1;
   volcanoWaiting.clear(); volcanoFault = null; volcanoDetail = []; volcanoSky = []; volcanoTargetDay = -1;
   for (const mesh of volcanoMeshes) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
   volcanoMeshes = [];volcanoPatchMap.clear();volcanoFineLookup.clear();volcanoMaskData.fill(0);volcanoMaskTexture.needsUpdate=true; document.getElementById('volcanoPanel').classList.remove('show');
@@ -8134,16 +8167,38 @@ function volcanoBaseHeight(x,y) {
   const x1=Math.min(W-1,ix+1),y1=Math.min(H-1,iy+1),e=volcanoBaseElev;
   return (e[iy*W+ix]*(1-fx)+e[iy*W+x1]*fx)*(1-fy)+(e[y1*W+ix]*(1-fx)+e[y1*W+x1]*fx)*fy;
 }
+function refreshVolcanoFocus(){
+ if(!world||!volcanoBaseElev)return;
+ let id=-1,best=Infinity;
+ if(cam.dist<550)world.volcanoes.forEach((v,i)=>{const d=Math.hypot(v.x-cam.tx-W/2,v.y-cam.tz-H/2);if(d<Math.max(v.radius,cam.dist*.35)&&d<best){best=d;id=i;}});
+ if(id!==volcanoFocus){volcanoFocus=id;rebuildVolcanoDetail();requestRender();}
+}
+function lavaDisplayColor(p){
+ const heat=p.active?Math.max(0,Math.min(1,(p.temperature-650)/450))*Math.min(1,(p.liquidFraction??1)*4):0;
+ const skin=Math.max(0,Math.min(1,((p.surfaceTemperature??p.temperature)-500)/500));
+ const glow=heat*(.55+.45*skin);
+ return [.22+.76*glow,.20+.1*glow,.18*(1-glow)+.025*glow];
+}
 function rebuildVolcanoDetail(force=false) {
   if(!volcanoBaseElev)return;
   const refinement=volcanoLastMetrics.refinement||8,step=1/refinement,N=W*refinement;
   const next=new Map(),patches=new Map(),dirty=new Set();
   for(const p of volcanoDetail){const ix=Math.floor(p.x*refinement),iy=Math.floor(p.y*refinement),key=iy*N+ix;
     next.set(key,p);const prev=volcanoFineLookup.get(key),bx=Math.floor(p.x),by=Math.floor(p.y),tile=Math.floor(by/4)*Math.ceil(W/4)+Math.floor(bx/4);
-    if(force||!prev||prev.z!==p.z||prev.temperature!==p.temperature||prev.ash!==p.ash||prev.pyro!==p.pyro||prev.pumice!==p.pumice)dirty.add(tile);
+    if(force||!prev||prev.z!==p.z||prev.temperature!==p.temperature||prev.surfaceTemperature!==p.surfaceTemperature||prev.liquidFraction!==p.liquidFraction||prev.ash!==p.ash||prev.pyro!==p.pyro||prev.pumice!==p.pumice)dirty.add(tile);
     if(!patches.has(tile))patches.set(tile,new Set());patches.get(tile).add(by*W+bx);
   }
   for(const [key,p]of volcanoFineLookup)if(!next.has(key))dirty.add(Math.floor(p.y/4)*Math.ceil(W/4)+Math.floor(p.x/4));
+  // Reuse the existing fine patch renderer before an eruption as well.
+  if(volcanoFocus>=0){const v=world.volcanoes[volcanoFocus],r=Math.min(8,Math.max(2,v.radius));
+   for(let y=Math.max(0,Math.floor(v.y-r));y<Math.min(H,Math.ceil(v.y+r));y++)for(let x=Math.max(0,Math.floor(v.x-r));x<Math.min(W,Math.ceil(v.x+r));x++){
+    if(Math.hypot(x+.5-v.x,y+.5-v.y)>r)continue;
+    const tile=Math.floor(y/4)*Math.ceil(W/4)+Math.floor(x/4),i=y*W+x;
+    if(!patches.has(tile))patches.set(tile,new Set());patches.get(tile).add(i);
+   }
+  }
+  for(const [tile,cells]of patches){const old=volcanoPatchMap.get(tile);if(force||!old||old.cells.size!==cells.size||Array.from(cells).some(i=>!old.cells.has(i)))dirty.add(tile);}
+  for(const tile of volcanoPatchMap.keys())if(!patches.has(tile))dirty.add(tile);
   volcanoFineLookup=next;
   for(const tile of dirty){const old=volcanoPatchMap.get(tile);if(old){scene.remove(old.mesh);old.mesh.geometry.dispose();old.mesh.material.dispose();for(const i of old.cells){const x=i%W,y=Math.floor(i/W);volcanoMaskData[(H-1-y)*W+x]=0;}volcanoPatchMap.delete(tile);}
     const cells=patches.get(tile);if(!cells)continue;
@@ -8154,7 +8209,9 @@ function rebuildVolcanoDetail(force=false) {
         const z=p?p.z:volcanoBaseHeight(x,y),hot=p&&p.temperature>650&&p.active;
         let color=hot?[.98,.25,.035]:p?(p.pyro>p.lava?[.68,.63,.53]:p.pumice>0?[.72,.70,.63]:[.36,.32,.28]):[.36,.39,.3];
         if(z<0)color=[.16,.27,.42];
-        if(terrainTex && terrainTex.image.data && viewMode!=='biome' && viewMode!=='elev'){const data=terrainTex.image.data,o=((H-1-by)*W+bx)*4;color=[data[o]/255,data[o+1]/255,data[o+2]/255];}
+        if(terrainTex && terrainTex.image.data && ((!p)||(!p.active && viewMode!=='biome' && viewMode!=='elev'))){const data=terrainTex.image.data,o=((H-1-by)*W+bx)*4;color=[data[o]/255,data[o+1]/255,data[o+2]/255];}
+        // Thermal lava remains visible over every map layer; the cooled skin darkens.
+        if(p&&p.lava>0&&z>=0)color=lavaDisplayColor(p);
         const k=positions.length/3;
         for(const [dx,dy]of [[-.5,-.5],[-.5,.5],[.5,.5],[.5,-.5]]){
           const vx=x+dx*step,vy=y+dy*step;
@@ -8247,7 +8304,7 @@ function serializeState() {
 // END VOLCANO UI
 
 // テスト・将来の拡張用に現在の世界データを参照できるようにする
-window.__geo = { weatherGlyphs:()=>weatherGlyphs, labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
+window.__geo = { volcanoRenderState:()=>({focus:volcanoFocus,patches:volcanoPatchMap.size,active:volcanoDetail.filter(p=>p.active).length}), setTerrainSampling, weatherGlyphs:()=>weatherGlyphs, labRestore, setHeightScale, selectViewMode, openVolcano, volcanoReady, volcanoMetrics:()=>volcanoLastMetrics, stepVolcanoDays:async(n)=>{if(!volcanoReady())throw Error("busy");clockSkipDays(n);clockAfterStep();await volcanoCall("snapshot");}, get world() { return world; }, get seed() { return currentSeed; }, generate, seedToInt, cam, updateCamera, get sim() { return sim; }, clock, history, names, serializeState, loadState, saveTo };
 
 updateRiverPix();
 resetCamera();
