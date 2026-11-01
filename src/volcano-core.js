@@ -11,7 +11,7 @@ const VolcanoCore = (() => {
     dacite: { temperature: 950, viscosity: 3000000, solidus: 730, gas: 0.7 },
     rhyolite: { temperature: 850, viscosity: 100000000, solidus: 680, gas: 0.8 }
   };
-  const DEFAULTS={natural:false,pressureThreshold:.88,eruptionChance:.12,deepWater:200,collapseFraction:.35,collapseMinVolume:5e7,soilYears:120,weatheringRate:.0002,gasDecay:.8};
+  const DEFAULTS={natural:false,pressureThreshold:.88,eruptionChance:.12,deepWater:200,collapseFraction:.35,collapseMinVolume:5e7,soilYears:120,weatheringRate:.0002,gasDecay:.8,coastErosion:.0001,upliftPerYear:.003,subsidencePerYear:.001,aerosolDecay:.96,capacityGrowth:.00005,ordinaryMaxVolume:1e10,superReservoirMin:1e11};
   function eruptionStyle(v,volume,depth,vent){
     if(depth>0&&depth<200)return 'surtseyan';
     if(v.viscosity<10000&&vent==='fissure')return 'icelandic';
@@ -20,7 +20,7 @@ const VolcanoCore = (() => {
     if(v.gas>.6&&volume>1e7)return 'plinian';
     return v.gas>.45||v.viscosity>=1e5?'vulcanian':'strombolian';
   }
-  function veiFromVolume(bulk){return bulk<1e4?0:Math.min(8,Math.max(1,Math.floor(Math.log10(bulk))-3));}
+  function veiFromVolume(bulk){return bulk<1e4?0:Math.min(8,Math.max(1,Math.floor(Math.log10(bulk))-4));}
   const NEIGHBOURS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
   const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
   const copy = o => JSON.parse(JSON.stringify(o));
@@ -83,7 +83,11 @@ const VolcanoCore = (() => {
     const bits = new Uint32Array(base.buffer);
     for (let i = 0; i < base.length; i++) { finite(base[i], 'elevation'); baseHash = Math.imul(baseHash ^ bits[i], 16777619); }
     const FW = W * REFINE, FH = H * REFINE, edge = scale / REFINE, area = edge * edge;
-    let config={...DEFAULTS,...options.config};validNumbers(config);
+    let config={...DEFAULTS,...options.config};
+    function validateConfig(config){validNumbers(config);
+    if(!(config.pressureThreshold>0&&config.pressureThreshold<1)||!(config.eruptionChance>=0&&config.eruptionChance<=1)||!(config.soilYears>0)||Object.values(config).some(v=>typeof v==='number'&&v<0))throw new RangeError('invalid volcanic parameters');
+    }
+    validateConfig(config);
     const climate = options.climate || null, river = options.river || null;
     if (climate) {
       if (!Number.isInteger(climate.w) || !Number.isInteger(climate.h) || climate.w < 1 || climate.h < 1 || !(climate.step > 0)) throw new RangeError('invalid climate grid');
@@ -151,7 +155,7 @@ const VolcanoCore = (() => {
     function waterAt(x, y) {
       if (!inside(x,y)) return false;
       const z = surfaceAt(x, y), bi = baseIndex(x,y), lake = river?.lakeId?.[bi] || 0;
-      if (z < 0) return true;
+      if (z < 0 || (cells.get(key(x,y))?.waterDepth||0)>.02) return true;
       return !!lake && z < (river?.lakeLevels?.[lake] ?? base[bi] + 2);
     }
     function weather(x, y, atDay = tick / 4) {
@@ -188,6 +192,7 @@ const VolcanoCore = (() => {
       const c = get(x,y); c[material] += amount;
       if (material === 'pyro') c.pyroBulk += amount * expansion;
       if (material === 'pumice' && waterAt(x,y)) c.floating += amount * 0.8;
+      if(config.natural){c.soil=(c.soil||0)*Math.exp(-amount*expansion/area/.2);c.cover=(c.cover||0)*Math.exp(-amount*expansion/area/.02);}
       erodible.add(key(x,y)); mark(c);
     }
     function addLava(x,y,amount,v) {
@@ -199,7 +204,9 @@ const VolcanoCore = (() => {
       c.viscosity = (c.viscosity*c.liquid + v.viscosity*amount) / total;
       c.solidus = (c.solidus*c.liquid + COMPOSITION[v.composition].solidus*amount) / total;
       c.eruptionTemperature = (c.eruptionTemperature*c.liquid + v.temperature*amount) / total;
-      c.liquid = total; active.add(key(x,y)); mark(c);
+      c.liquid = total;
+      if(config.natural){c.soil=0;c.cover=0;c.origin=v.id;}
+      active.add(key(x,y)); mark(c);
     }
     function normalized(points) {
       const merged = new Map();
@@ -261,10 +268,12 @@ const VolcanoCore = (() => {
       if (!v.active) return { ok:false,reason:'inactive volcano' };
       if (pending.some(p => p.id === id)) return { ok:false,reason:'busy eruption' };
       if (!(v.magmaVolume > 0)) return { ok:false,reason:'no magma available' };
-      const volume = Math.min(v.magmaVolume, automatic?v.magmaVolume*(.12+.5*v.pressure*v.gas):[0,1e6,1e7,8e7,4e8][level] * (0.65 + 0.35 * v.pressure));
+      const giantEligible=v.structure==='caldera'&&v.composition==='rhyolite'&&v.capacity>=config.superReservoirMin;
+      const volume = Math.min(v.magmaVolume,config.natural&&!giantEligible?config.ordinaryMaxVolume:Infinity, automatic?v.magmaVolume*(.12+.5*v.pressure*v.gas):[0,1e6,1e7,8e7,4e8][level] * (0.65 + 0.35 * v.pressure));
       const felsic = v.composition === 'rhyolite' || v.composition === 'dacite';
       const shirasu = felsic && v.gas >= 0.7 && level >= 3 && v.setting === 'land';
-      const explosion = clamp(v.gas*(0.2+level*0.10+v.pressure*.18)+(felsic?0.18:0),0.02,0.88);
+      const waterDepth=Math.max(0,-heightAt(v.x,v.y));
+      const explosion = clamp((v.gas*(0.2+level*0.10+v.pressure*.18)+(felsic?0.18:0)+(config.natural&&waterDepth>0&&waterDepth<200?.2:0))/(config.natural?1+Math.max(0,waterDepth-200)/500:1),0.02,0.88);
       const fractions = { lava:1-explosion, ash:explosion*0.48, pumice:explosion*(felsic?0.2:0.08), pyro:explosion*(felsic?0.32:0.44) };
       const angle = random()*Math.PI*2, ventType = (v.morphology === 'shield' || v.tectonicContext==='rift') ? (level >= 2 ? 'fissure' : 'flank') : v.pressure>.65 && random()<.35 ? 'flank' : 'summit';
       const vents = [], count = ventType === 'fissure' ? 5 : 1;
@@ -279,14 +288,14 @@ const VolcanoCore = (() => {
       v.lastStyle=style;v.lastVEI=vei;v.lastLavaVolume=volume*fractions.lava;v.lastTephraVolume=tephra;
       pending.push({ style,vei,id, level, remaining:volume, volume, stepsLeft:steps, rate:volume/steps,
         fractions, vents, ash:fallout(v,level,false), pumice:fallout(v,level,true), pyro:pyroPaths(v,level,shirasu), shirasu, ventType });
+      if(config.natural&&depth>config.deepWater){const p=pending[pending.length-1];p.ash=p.pumice=p.pyro=p.vents;}
       pending.sort((a,b)=>a.id-b.id);
       v.magmaVolume -= volume; v.pressure = clamp(v.magmaVolume/v.capacity,0,1); v.lastEruptionDay = tick/4;
       ledger.sourceDRE += volume;
-      sky.push({ x:v.x,y:v.y,strength:explosion*level/4,day:tick/4,id }); if (sky.length>64) sky.shift();
+      sky.push({ x:v.x,y:v.y,strength:(config.natural&&depth>config.deepWater?0:explosion*level/4),day:tick/4,id }); if (sky.length>64) sky.shift();
       emit('eruption',id,`${v.composition} ${ventType} eruption`);
       if (shirasu) emit('shirasu',id,'Broad non-welded felsic pyroclastic deposit');
-      if(config.natural&&volume>=config.collapseMinVolume&&volume/v.capacity>config.collapseFraction&&v.viscosity>=1e5)collapse(v,volume);
-      if(config.natural){v.gas=clamp(v.gas*(1-volume/v.capacity*.35),.02,1);v.viscosity=COMPOSITION[v.composition].viscosity*(1+.5*(1-v.pressure));}
+      if(config.natural){v.aerosol=(v.aerosol||0)+(depth>config.deepWater?0:Math.min(6,tephra/1e9)*v.gas);v.gas=clamp(v.gas*(1-volume/v.capacity*.35),.02,1);v.viscosity=COMPOSITION[v.composition].viscosity*(1+.5*(1-v.pressure));}
 
       return { ok:true,volumeDRE:volume,durationDays:steps/4,ventType,style,vei };
     }
@@ -298,7 +307,8 @@ const VolcanoCore = (() => {
        const rim=1+.08*Math.sin(Math.atan2(w,u)*5+angle);
        if(d>=rim)continue;const q=Math.min(1,(rim-d)*12);points.push({x,y,w:q});weight+=q;
       }
-      for(const p of points){const c=get(p.x,p.y);c.offset=(c.offset||0)-volume*.65*p.w/weight/area;mark(c);}
+      let rim=Infinity;for(let j=0;j<32;j++){const a=j*Math.PI/16;rim=Math.min(rim,surfaceAt(clamp(Math.round(cx+Math.cos(a)*radius*1.15),0,FW-1),clamp(Math.round(cy+Math.sin(a)*radius*1.15),0,FH-1)));}
+      for(const p of points){const c=get(p.x,p.y);c.basinRim=rim;c.basinId=v.id;c.offset=(c.offset||0)-volume*.65*p.w/weight/area;mark(c);}
       v.structure='caldera';v.collapsedDRE=(v.collapsedDRE||0)+volume*.65;
       emit('caldera',v.id,'マグマ流出によりカルデラが陥没');
     }
@@ -314,15 +324,16 @@ const VolcanoCore = (() => {
             const q=kernel[i], share=i===kernel.length-1 ? dose-distributed : dose*q.w; distributed+=share;
             if (material==='lava') {
               if(config.natural&&inside(q.x,q.y)&&surfaceAt(q.x,q.y)<-config.deepWater){
-                const targets=NEIGHBOURS.map(([dx,dy])=>({x:q.x+dx,y:q.y+dy,w:1/8}));let sent=0;
-                targets.forEach((t,j)=>{const part=j===7?share-sent:share*t.w;sent+=part;addLava(t.x,t.y,part,v);});
+                const spread=clamp(Math.ceil(Math.cbrt(share)/edge*(1+10000/(v.viscosity+10000))),1,6);
+                const targets=normalized(NEIGHBOURS.map(([dx,dy])=>({x:q.x+dx*spread,y:q.y+dy*spread,w:Math.exp(clamp((surfaceAt(q.x,q.y)-surfaceAt(q.x+dx*spread,q.y+dy*spread))/edge,-3,3))})));let sent=0;
+                targets.forEach((t,j)=>{const part=j===7?share-sent:share*t.w;sent+=part;if(!inside(t.x,t.y)){exported('lava',part);return;}const c=get(t.x,t.y);c.solid+=part;c.origin=v.id;c.surface=4;c.interior=4;c.cover=0;c.soil=0;mark(c);});
               }else addLava(q.x,q.y,share,v);
             }
             else addMaterial(material,q.x,q.y,share,material==='pyro'&&p.shirasu ? 3.3 : EXPANSION[material]);
           }
         }
         p.remaining -= amount; p.stepsLeft--;
-        if (!p.stepsLeft) emit('eruption-end',p.id,'Reservoir discharge completed');
+        if (!p.stepsLeft) {if(config.natural&&p.volume>=config.collapseMinVolume&&p.volume/v.capacity>config.collapseFraction&&v.viscosity>=1e5)collapse(v,p.volume);emit('eruption-end',p.id,'Reservoir discharge completed');}
       }
       pending = pending.filter(p=>p.stepsLeft>0);
     }
@@ -395,6 +406,28 @@ const VolcanoCore = (() => {
       }
       return current;
     }
+    function landProperties(c){
+      const lava=c.liquid+c.solid,loose=c.ash+c.pyro+c.pumice,rock=lava>=loose;
+      return {rockType:lava+loose===0?'substrate':rock?'lava':c.pyro>=c.ash?'pyroclastic':'ash',hardness:rock?.85:.25,permeability:rock?.2:.7,
+        soilDevelopment:c.soil||0,nutrients:clamp((c.soil||0)*.8*(1-(c.gas||0))*(1-(c.leached||0)),0,1),stability:clamp((rock?.85:.35)-Math.max(0,-(c.offset||0))/2000,0,1),vegetation:c.cover||0,gas:c.gas||0};
+    }
+    function environmentMonth(){
+      const moves=[];
+      for(const c of orderedCells()){
+        const w=weather((c.x+.5)/REFINE,(c.y+.5)/REFINE),z=surfaceAt(c.x,c.y),wet=z<0;
+        c.gas=(c.gas||0)*config.gasDecay;
+        const suitable=!wet&&c.liquid===0&&w.temp>-5&&w.rain>10;
+        if(suitable){c.soil=clamp((c.soil||0)+Math.min(2,w.rain/100)/(config.soilYears*12),0,1);c.leached=clamp((c.leached||0)+Math.max(0,w.rain-180)*config.weatheringRate/100,0,.9);c.cover=clamp((c.cover||0)+((c.soil||0)*.01)*(1-(c.gas||0)),0,1);}
+        else c.cover=(c.cover||0)*.8;
+        c.cover*=1-(c.gas||0)*.1;
+        if(c.basinRim!==undefined){const available=Math.max(0,c.basinRim-z);c.waterDepth=clamp((c.waterDepth||0)+(w.rain-Math.max(5,w.temp*2))*.001,0,available);}
+        const source=volcanoes[c.origin];if(source){c.offset=(c.offset||0)+(source.tectonicContext==='subduction'?config.upliftPerYear:source.tectonicContext==='hotspot'?-config.subsidencePerYear:0)/12;}
+        if(c.solid>0){const dest=downhill(c.x,c.y,1,false),coastal=NEIGHBOURS.some(([dx,dy])=>inside(c.x+dx,c.y+dy)&&surfaceAt(c.x+dx,c.y+dy)<0);
+          if(coastal&&(dest.x!==c.x||dest.y!==c.y)){const dose=c.solid*config.coastErosion*(1+w.rain/100);c.solid-=dose;moves.push({...dest,dose});ledger.erodedDRE+=dose;}}
+        mark(c);
+      }
+      for(const t of moves){if(!inside(t.x,t.y))exported('lava',t.dose);else{const c=get(t.x,t.y);c.solid+=t.dose;mark(c);}}
+    }
     function monthly(){
       for(const v of volcanoes){
         const quiet=tick/4-(v.lastEruptionDay??0);
@@ -402,15 +435,20 @@ const VolcanoCore = (() => {
           v.active=false;emit('dormant',v.id,'休止状態へ移行');
         }
         if(config.natural){
+          v.aerosol=(v.aerosol||0)*config.aerosolDecay;
+          if(v.structure==='caldera'&&v.composition==='rhyolite'&&v.supply>0)v.capacity*=1+config.capacityGrowth;
+          if(v.active&&v.pressure>.6){const c=get(clamp(Math.floor(v.x*REFINE),0,FW-1),clamp(Math.floor(v.y*REFINE),0,FH-1));c.gas=clamp((c.gas||0)+v.gas*v.pressure*.15,0,1);mark(c);}
           v.gas=clamp(v.gas+(COMPOSITION[v.composition].gas-v.gas)*.015,0,1);
           v.viscosity=COMPOSITION[v.composition].viscosity*(1+.5*(1-v.pressure));
           if(v.active&&v.pressure>config.pressureThreshold&&!pending.some(p=>p.id===v.id)&&random()<config.eruptionChance*(v.pressure-config.pressureThreshold)/(1-config.pressureThreshold))erupt(v.id,Math.min(4,1+Math.floor(v.pressure*3)),true);
         }
         if(v.supply<=0)continue;
+        if(config.natural)v.supply*=.995+random()*.01;
         const addition=Math.min(v.capacity-v.magmaVolume,v.supply*30);v.magmaVolume+=addition;ledger.rechargedDRE+=addition;
         v.pressure=clamp(v.magmaVolume/v.capacity,0,1);
         if(!v.active && v.pressure>.55 && random()<clamp((v.pressure-.5)*2,0,1)){v.active=true;emit('reactivation',v.id,'活動を再開');}
       }
+      if(config.natural)environmentMonth();
       const transfers=[];
       for(const k of Array.from(erodible).sort((a,b)=>a-b)){
         const c=cells.get(k);if(!c)continue;
@@ -485,7 +523,7 @@ const VolcanoCore = (() => {
         const bi=baseIndex(c.x,c.y);let a=aggregate.get(bi);if(!a){a={other:0,ash:0};aggregate.set(bi,a);}
         a.other+=c.liquid+c.solid+c.pumice*5+c.pyroBulk+(c.offset||0)*area;a.ash+=c.ash*3.5;
         const x=(c.x+.5)/REFINE,y=(c.y+.5)/REFINE;
-        detail.push({x,y,z:baseHeight(x,y)+bulk(c)/area+(c.offset||0),lava:(c.liquid+c.solid)/area,
+        detail.push({land:landProperties(c),waterDepth:Math.min(c.waterDepth||0,Math.max(0,(c.basinRim??0)-surfaceAt(c.x,c.y))),basinId:c.basinId??-1,x,y,z:baseHeight(x,y)+bulk(c)/area+(c.offset||0),lava:(c.liquid+c.solid)/area,
           ash:c.ash*3.5/area,pumice:c.pumice*5/area,pyro:c.pyroBulk/area,
           active:c.liquid>0,surfaceTemperature:c.surface,liquidFraction:c.liquid/Math.max(1e-30,c.liquid+c.solid),temperature:c.liquid>0?c.interior:c.surface});
       }
@@ -494,7 +532,7 @@ const VolcanoCore = (() => {
         const a=aggregate.get(bi)||{other:0,ash:0};
         output.push([bi,base[bi]+(a.other+(a.ash/(scale*scale)>=ASH_THRESHOLD?a.ash:0))/(scale*scale)]);
       }
-      const out={cells:output,detail,volcanoes:volcanoes.map(v=>({...copy(v),eruption:pending.some(p=>p.id===v.id)})),events:copy(events),
+      const out={climateCooling:Math.min(6,sum(volcanoes.map(v=>v.aerosol||0))),cells:output,detail,volcanoes:volcanoes.map(v=>({...copy(v),eruption:pending.some(p=>p.id===v.id)})),events:copy(events),
         sky:sky.map(s=>({x:s.x,y:s.y,strength:s.strength*Math.exp(-(tick/4-s.day)/24),ageDays:tick/4-s.day})),metrics:measure()};
       dirty.clear();events=[];return out;
     }
@@ -510,10 +548,14 @@ const VolcanoCore = (() => {
       if(!Number.isSafeInteger(saved.day)||saved.day<0||saved.tick!==saved.day*4||!Number.isInteger(saved.rng)||saved.rng<0||saved.rng>4294967295)throw new RangeError('invalid snapshot clock/rng');
       checkVolcanoes(saved.volcanoes);
       if(!Array.isArray(saved.cells)||!Array.isArray(saved.pending)||!Array.isArray(saved.sky)||!Array.isArray(saved.events)||!saved.ledger)throw new TypeError('invalid snapshot arrays');
+      validateConfig({...config,...saved.config});
       const next=copy(saved),newCells=new Map(),newActive=new Set(),newErodible=new Set();
       for(const c of next.cells){
         if(!Number.isInteger(c.x)||!Number.isInteger(c.y)||!inside(c.x,c.y)||newCells.has(key(c.x,c.y)))throw new RangeError('invalid snapshot cell');
         for(const name of ['liquid','solid','ash','pumice','pyro','pyroBulk','floating'])if(!(c[name]>=0))throw new RangeError('invalid material volume');
+        for(const name of ['soil','cover','gas','leached'])if(c[name]!==undefined&&!(c[name]>=0&&c[name]<=1))throw new RangeError('invalid surface property');
+        if(c.waterDepth!==undefined&&!(c.waterDepth>=0))throw new RangeError('invalid lake depth');
+        for(const name of ['origin','basinId'])if(c[name]!==undefined&&(!Number.isInteger(c[name])||!next.volcanoes[c[name]]))throw new RangeError('invalid volcanic cell reference');
         for(const name of ['surface','interior','viscosity','solidus','eruptionTemperature'])finite(c[name],name);
         if(c.floating>c.pumice||c.viscosity<=0||c.pyroBulk<c.pyro||c.pyroBulk>c.pyro*6+1e-7)throw new RangeError('inconsistent material state');
         const k=key(c.x,c.y);newCells.set(k,c);if(c.liquid>0)newActive.add(k);if(c.ash+c.pumice+c.pyro>1e-10)newErodible.add(k);
@@ -539,7 +581,7 @@ const VolcanoCore = (() => {
       for(const s of next.sky)if(!(s.day>=0&&s.day<=next.day)||!(s.strength>=0&&s.strength<=1)||!Number.isFinite(s.x)||!Number.isFinite(s.y))throw new RangeError('invalid sky state');
       const rebuilt=new Set(dirty);for(const c of cells.values())rebuilt.add(baseIndex(c.x,c.y));for(const c of newCells.values())rebuilt.add(baseIndex(c.x,c.y));
       cells=newCells;active=newActive;erodible=newErodible;dirty=rebuilt;volcanoes=next.volcanoes;
-      config={...DEFAULTS,...next.config};pending=next.pending;sky=next.sky;events=next.events;ledger=next.ledger;day=next.day;tick=next.tick;rng=next.rng;
+      config={...config,...next.config};pending=next.pending;sky=next.sky;events=next.events;ledger=next.ledger;day=next.day;tick=next.tick;rng=next.rng;
       return {ok:true};
     }
     return {erupt,advanceTo,drainChanges,heightAt,snapshot,restore,measure};

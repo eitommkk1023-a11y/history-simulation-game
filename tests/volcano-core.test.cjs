@@ -268,6 +268,34 @@ test('VEI uses tephra volume and seven styles share the same engine',()=>{
 test('automatic activity and collapse change real elevations and survive save/load',()=>{
  const v={...fixture().snapshot().volcanoes[0],capacity:1e9,magmaVolume:1e9,gas:.95,pressure:1,viscosity:1e7,composition:'dacite',supply:1e6};
  const config={natural:true,eruptionChance:1};const a=fixture({volcanoes:[v],config});
- a.advanceTo(30);assert.ok(a.measure().sourceDRE>0);const d=a.drainChanges();assert.ok(d.events.some(e=>e.type==='caldera'));assert.ok(d.cells.some(([i,z])=>z<100));conserved(a);
+ a.advanceTo(50);assert.ok(a.measure().sourceDRE>0);const d=a.drainChanges();assert.ok(d.events.some(e=>e.type==='caldera'));assert.ok(d.detail.some(c=>c.z<100));const reference=fixture({volcanoes:[v],config:{...config,collapseMinVolume:1e99}});reference.advanceTo(50);const uncollapsed=new Map(reference.drainChanges().cells);assert.ok(d.cells.some(([i,z])=>z<(uncollapsed.get(i)??100)));conserved(a);
  const b=fixture({volcanoes:[v],config});b.restore(a.snapshot());a.advanceTo(60);b.advanceTo(60);assert.deepEqual(a.snapshot(),b.snapshot());conserved(b);
 });
+
+test('VEI thresholds follow bulk explosive ejecta rather than lava',()=>{
+ for(const [volume,vei]of [[1e4,1],[1e6,2],[1e7,3],[1e8,4],[1e9,5],[1e10,6],[1e11,7],[1e12,8]])assert.equal(Core.veiFromVolume(volume),vei);
+});
+test('deep submarine discharge deposits solid ground without an aerial ash plume',()=>{
+ const e=fixture({terrain:()=>-1000,config:{natural:true}});e.erupt(0,3);e.advanceTo(10);
+ const m=conserved(e),d=e.drainChanges();assert.ok(m.materials.lava.currentDRE>0);assert.ok(d.cells.some(([i,z])=>z>-1000));assert.equal(d.climateCooling,0);assert.equal(m.activeCells,0);assert.ok(d.sky.every(s=>s.strength===0));
+});
+test('weathered soil develops gradually, caldera rainwater accumulates and cooling fades',()=>{
+ const v={...fixture().snapshot().volcanoes[0],capacity:1e9,magmaVolume:1e9,gas:.95,pressure:1,viscosity:1e7,composition:'dacite',supply:0};
+ const climate={w:1,h:1,step:20,precip:Array(12).fill(180),tMean:Array(12).fill(150)};
+ const e=fixture({volcanoes:[v],config:{natural:true,eruptionChance:1},climate});e.advanceTo(50);
+ const a=e.drainChanges();assert.ok(a.climateCooling>0);e.advanceTo(90);assert.ok(e.drainChanges().detail.some(c=>c.waterDepth>0));e.advanceTo(3600);const b=e.drainChanges();conserved(e);
+ assert.ok(b.climateCooling<a.climateCooling);assert.ok(b.detail.some(c=>c.land.soilDevelopment>0));
+ assert.ok(b.detail.every(c=>c.land.nutrients>=0&&c.land.nutrients<=1));
+});
+
+ test('natural-enabled shallow submarine eruptions create and expand land at the real map scale',()=>{
+ const v={...fixture().snapshot().volcanoes[0],capacity:2e9,magmaVolume:2e9,setting:'submarine'};
+ const e=fixture({metresPerBlock:3330,terrain:()=>-5,volcanoes:[v],config:{natural:true,eruptionChance:0}});
+ let first=0;for(let n=0;n<6;n++){assert.ok(e.erupt(0,3).ok);e.advanceTo((n+1)*30);conserved(e);const d=e.drainChanges();if(n===0)first=d.detail.filter(c=>c.z>0).length;}
+ const d=e.drainChanges();assert.ok(d.detail.filter(c=>c.z>0).length>first);assert.ok(d.detail.some(c=>c.active===false&&c.lava>0));
+ assert.ok(e.snapshot().cells.some(c=>c.solid>0));assert.ok(d.detail.some(c=>c.z>0));
+ });
+ test('invalid saved environmental parameters are rejected atomically',()=>{
+ const e=fixture({config:{natural:true}}),before=e.snapshot(),bad=e.snapshot();bad.config.soilYears=0;
+ assert.throws(()=>e.restore(bad));assert.deepEqual(e.snapshot(),before);
+ });
