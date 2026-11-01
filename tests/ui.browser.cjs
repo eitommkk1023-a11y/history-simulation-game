@@ -40,7 +40,9 @@ const {chromium,webkit}=require('playwright'); const assert=require('node:assert
  for(const scale of [1,1.5,2,10,20])await page.evaluate(s=>window.__geo.setHeightScale(s),scale);
  assert.deepEqual(await page.evaluate(()=>Array.from(window.__geo.world.elev.slice(0,100))),sample);
  const id=await page.evaluate(()=>window.__geo.world.volcanoes.findIndex(v=>v.active)); assert.ok(id>=0);
- await page.evaluate(i=>window.__geo.openVolcano(i),id);
+ await page.evaluate(i=>{const g=window.__geo,v=g.world.volcanoes[i];Object.assign(g.cam,{tx:v.x-1500,tz:v.y-1500,dist:100,pitch:1});g.updateCamera();g.openVolcano(i);},id);
+ await page.waitForFunction(()=>window.__geo.volcanoRenderState().patches>0);
+ console.log('PASS fine volcano terrain before eruption');
  assert.equal(await page.locator('#volcanoPanel [data-level]').count(),4);
  await page.locator('#volcanoPanel [data-level="1"]').click();
  await page.waitForFunction(()=>window.__geo.volcanoReady());

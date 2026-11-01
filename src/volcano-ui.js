@@ -5,6 +5,7 @@ let volcanoBaseElev = null, volcanoBaseType = null, volcanoBaseBiome = null, vol
 let volcanoBaseVolcanoes = [], volcanoBaseRegions = new Map(), volcanoBaseEnv = null;
 let volcanoDetail = [], volcanoSky = [], volcanoLastMetrics = {}, volcanoTargetDay = -1;
 let volcanoSelected = -1, volcanoMeshes = [], volcanoStateVersion = 0;
+let volcanoFocus=-1;
 let volcanoPatchMap = new Map(), volcanoFineLookup = new Map();
 const volcanoMaskData = new Uint8Array(W*H);
 const volcanoMaskTexture = new THREE.DataTexture(volcanoMaskData,W,H,THREE.LuminanceFormat);
@@ -24,6 +25,7 @@ function disposeVolcanoRuntime() {
   if (volcanoWorker) volcanoWorker.terminate(); volcanoWorker = null;
   for (const pending of volcanoWaiting.values()) pending.reject(new Error('世界を切り替えました'));
   volcanoBaseElev=volcanoBaseType=volcanoBaseBiome=volcanoBaseSea=volcanoBaseEnv=null;volcanoBaseVolcanoes=[];volcanoBaseRegions.clear();
+  volcanoFocus=-1;
   volcanoWaiting.clear(); volcanoFault = null; volcanoDetail = []; volcanoSky = []; volcanoTargetDay = -1;
   for (const mesh of volcanoMeshes) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
   volcanoMeshes = [];volcanoPatchMap.clear();volcanoFineLookup.clear();volcanoMaskData.fill(0);volcanoMaskTexture.needsUpdate=true; document.getElementById('volcanoPanel').classList.remove('show');
@@ -125,16 +127,38 @@ function volcanoBaseHeight(x,y) {
   const x1=Math.min(W-1,ix+1),y1=Math.min(H-1,iy+1),e=volcanoBaseElev;
   return (e[iy*W+ix]*(1-fx)+e[iy*W+x1]*fx)*(1-fy)+(e[y1*W+ix]*(1-fx)+e[y1*W+x1]*fx)*fy;
 }
+function refreshVolcanoFocus(){
+ if(!world||!volcanoBaseElev)return;
+ let id=-1,best=Infinity;
+ if(cam.dist<550)world.volcanoes.forEach((v,i)=>{const d=Math.hypot(v.x-cam.tx-W/2,v.y-cam.tz-H/2);if(d<Math.max(v.radius,cam.dist*.35)&&d<best){best=d;id=i;}});
+ if(id!==volcanoFocus){volcanoFocus=id;rebuildVolcanoDetail();requestRender();}
+}
+function lavaDisplayColor(p){
+ const heat=p.active?Math.max(0,Math.min(1,(p.temperature-650)/450))*Math.min(1,(p.liquidFraction??1)*4):0;
+ const skin=Math.max(0,Math.min(1,((p.surfaceTemperature??p.temperature)-500)/500));
+ const glow=heat*(.55+.45*skin);
+ return [.22+.76*glow,.20+.1*glow,.18*(1-glow)+.025*glow];
+}
 function rebuildVolcanoDetail(force=false) {
   if(!volcanoBaseElev)return;
   const refinement=volcanoLastMetrics.refinement||8,step=1/refinement,N=W*refinement;
   const next=new Map(),patches=new Map(),dirty=new Set();
   for(const p of volcanoDetail){const ix=Math.floor(p.x*refinement),iy=Math.floor(p.y*refinement),key=iy*N+ix;
     next.set(key,p);const prev=volcanoFineLookup.get(key),bx=Math.floor(p.x),by=Math.floor(p.y),tile=Math.floor(by/4)*Math.ceil(W/4)+Math.floor(bx/4);
-    if(force||!prev||prev.z!==p.z||prev.temperature!==p.temperature||prev.ash!==p.ash||prev.pyro!==p.pyro||prev.pumice!==p.pumice)dirty.add(tile);
+    if(force||!prev||prev.z!==p.z||prev.temperature!==p.temperature||prev.surfaceTemperature!==p.surfaceTemperature||prev.liquidFraction!==p.liquidFraction||prev.ash!==p.ash||prev.pyro!==p.pyro||prev.pumice!==p.pumice)dirty.add(tile);
     if(!patches.has(tile))patches.set(tile,new Set());patches.get(tile).add(by*W+bx);
   }
   for(const [key,p]of volcanoFineLookup)if(!next.has(key))dirty.add(Math.floor(p.y/4)*Math.ceil(W/4)+Math.floor(p.x/4));
+  // Reuse the existing fine patch renderer before an eruption as well.
+  if(volcanoFocus>=0){const v=world.volcanoes[volcanoFocus],r=Math.min(8,Math.max(2,v.radius));
+   for(let y=Math.max(0,Math.floor(v.y-r));y<Math.min(H,Math.ceil(v.y+r));y++)for(let x=Math.max(0,Math.floor(v.x-r));x<Math.min(W,Math.ceil(v.x+r));x++){
+    if(Math.hypot(x+.5-v.x,y+.5-v.y)>r)continue;
+    const tile=Math.floor(y/4)*Math.ceil(W/4)+Math.floor(x/4),i=y*W+x;
+    if(!patches.has(tile))patches.set(tile,new Set());patches.get(tile).add(i);
+   }
+  }
+  for(const [tile,cells]of patches){const old=volcanoPatchMap.get(tile);if(force||!old||old.cells.size!==cells.size||Array.from(cells).some(i=>!old.cells.has(i)))dirty.add(tile);}
+  for(const tile of volcanoPatchMap.keys())if(!patches.has(tile))dirty.add(tile);
   volcanoFineLookup=next;
   for(const tile of dirty){const old=volcanoPatchMap.get(tile);if(old){scene.remove(old.mesh);old.mesh.geometry.dispose();old.mesh.material.dispose();for(const i of old.cells){const x=i%W,y=Math.floor(i/W);volcanoMaskData[(H-1-y)*W+x]=0;}volcanoPatchMap.delete(tile);}
     const cells=patches.get(tile);if(!cells)continue;
@@ -145,7 +169,9 @@ function rebuildVolcanoDetail(force=false) {
         const z=p?p.z:volcanoBaseHeight(x,y),hot=p&&p.temperature>650&&p.active;
         let color=hot?[.98,.25,.035]:p?(p.pyro>p.lava?[.68,.63,.53]:p.pumice>0?[.72,.70,.63]:[.36,.32,.28]):[.36,.39,.3];
         if(z<0)color=[.16,.27,.42];
-        if(terrainTex && terrainTex.image.data && viewMode!=='biome' && viewMode!=='elev'){const data=terrainTex.image.data,o=((H-1-by)*W+bx)*4;color=[data[o]/255,data[o+1]/255,data[o+2]/255];}
+        if(terrainTex && terrainTex.image.data && ((!p)||(!p.active && viewMode!=='biome' && viewMode!=='elev'))){const data=terrainTex.image.data,o=((H-1-by)*W+bx)*4;color=[data[o]/255,data[o+1]/255,data[o+2]/255];}
+        // Thermal lava remains visible over every map layer; the cooled skin darkens.
+        if(p&&p.lava>0&&z>=0)color=lavaDisplayColor(p);
         const k=positions.length/3;
         for(const [dx,dy]of [[-.5,-.5],[-.5,.5],[.5,.5],[.5,-.5]]){
           const vx=x+dx*step,vy=y+dy*step;

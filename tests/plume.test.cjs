@@ -14,3 +14,12 @@ test('eruption leaves running or paused clock unchanged',async()=>{
  vm.createContext(ctx);vm.runInContext(make,ctx);await ctx.eruptVolcano(0,1);assert.equal(clock.playing,playing);
  }
 });
+
+test('lava cools from glowing flow to dark solid rock',()=>{
+ const src=ui.slice(ui.indexOf('function lavaDisplayColor('),ui.indexOf('function rebuildVolcanoDetail('));
+ const f=vm.runInNewContext('('+src.trim()+')');
+ const hot=f({active:true,temperature:1150,surfaceTemperature:1100,liquidFraction:1});
+ const crust=f({active:true,temperature:1150,surfaceTemperature:100,liquidFraction:1});
+ const solid=f({active:false,temperature:100,surfaceTemperature:100,liquidFraction:0});
+ assert.ok(hot[0]>crust[0]&&crust[0]>solid[0]);assert.ok(hot[0]>hot[1]*2);
+});

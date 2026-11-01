@@ -448,7 +448,7 @@ const VolcanoCore = (() => {
         const x=(c.x+.5)/REFINE,y=(c.y+.5)/REFINE;
         detail.push({x,y,z:baseHeight(x,y)+bulk(c)/area,lava:(c.liquid+c.solid)/area,
           ash:c.ash*3.5/area,pumice:c.pumice*5/area,pyro:c.pyroBulk/area,
-          active:c.liquid>0,temperature:c.liquid>0?c.interior:c.surface});
+          active:c.liquid>0,surfaceTemperature:c.surface,liquidFraction:c.liquid/Math.max(1e-30,c.liquid+c.solid),temperature:c.liquid>0?c.interior:c.surface});
       }
       const output=[];
       for(const bi of Array.from(dirty).sort((a,b)=>a-b)){
