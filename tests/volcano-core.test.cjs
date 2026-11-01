@@ -258,3 +258,16 @@ test('submillimetre deposits retain mass without indefinite erosion bookkeeping'
  assert.equal(after.totalCells,before.totalCells);
  assert.equal(after.erodedDRE,before.erodedDRE);
 });
+
+test('VEI uses tephra volume and seven styles share the same engine',()=>{
+ assert.equal(Core.veiFromVolume(100),0);assert.equal(Core.veiFromVolume(1e12),8);
+ const v={viscosity:250,gas:.2,morphology:'shield'};
+ const styles=[Core.eruptionStyle(v,1e6,0,'summit'),Core.eruptionStyle({...v,gas:.42},1e6,0,'summit'),Core.eruptionStyle({...v,viscosity:1e5},1e6,0,'summit'),Core.eruptionStyle({...v,viscosity:1e6,gas:.8},1e8,0,'summit'),Core.eruptionStyle({...v,viscosity:1e7,morphology:'dome'},1e6,0,'summit'),Core.eruptionStyle(v,1e6,20,'summit'),Core.eruptionStyle(v,1e6,0,'fissure')];
+ assert.equal(new Set(styles).size,7);
+});
+test('automatic activity and collapse change real elevations and survive save/load',()=>{
+ const v={...fixture().snapshot().volcanoes[0],capacity:1e9,magmaVolume:1e9,gas:.95,pressure:1,viscosity:1e7,composition:'dacite',supply:1e6};
+ const config={natural:true,eruptionChance:1};const a=fixture({volcanoes:[v],config});
+ a.advanceTo(30);assert.ok(a.measure().sourceDRE>0);const d=a.drainChanges();assert.ok(d.events.some(e=>e.type==='caldera'));assert.ok(d.cells.some(([i,z])=>z<100));conserved(a);
+ const b=fixture({volcanoes:[v],config});b.restore(a.snapshot());a.advanceTo(60);b.advanceTo(60);assert.deepEqual(a.snapshot(),b.snapshot());conserved(b);
+});
